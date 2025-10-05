@@ -5,10 +5,13 @@ transformers>=4.35.0
 accelerate>=0.24.0
 torch>=2.0.0
 sentence-transformers>=2.2.0
-faiss-cpu>=1.7.0
+# faiss-cpu>=1.7.0  # Replaced with ShibuDB vector database
 tiktoken>=0.5.0
 rich>=13.0.0
 
 # Optional dependencies for small models and quantization
 bitsandbytes>=0.41.0  # For 8-bit quantization
 optimum>=1.14.0       # For model optimization
+
+# Persistent indexing with ShibuDB
+shibudb-client>=1.0.1  # For persistent vector storage and change tracking

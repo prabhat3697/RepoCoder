@@ -45,6 +45,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from config import parse_args
 from models import IndexRequest, QueryRequest, QueryResponse, ApplyRequest
 from indexer import RepoIndexer
+from persistent_indexer import PersistentRepoIndexer
 from llm import LocalCoder
 from prompts import SYSTEM_TEMPLATE, USER_TEMPLATE, PLANNER_SYSTEM, PLANNER_USER, JUDGE_SYSTEM, JUDGE_USER, SIMPLE_SYSTEM_TEMPLATE, SIMPLE_USER_TEMPLATE
 from utils import make_context, apply_unified_diff
@@ -126,9 +127,27 @@ def create_app(
         max_loops: int = 2,
         quantize: bool = False,
         max_model_len: int = 1024,
+        use_persistent_index: bool = True,
+        shibudb_host: str = "localhost",
+        shibudb_port: int = 4444,
+        force_rebuild: bool = False,
 ):
-    indexer = RepoIndexer(repo_root, embed_model, max_chunk_chars=max_chunk, overlap=overlap)
-    indexer.build()
+    # Choose indexer based on configuration
+    if use_persistent_index:
+        indexer = PersistentRepoIndexer(
+            repo_root=repo_root,
+            embed_model_name=embed_model,
+            max_chunk_chars=max_chunk,
+            overlap=overlap,
+            shibudb_host=shibudb_host,
+            shibudb_port=shibudb_port
+        )
+    else:
+        indexer = RepoIndexer(repo_root, embed_model, max_chunk_chars=max_chunk, overlap=overlap)
+    
+    # Build index (incremental for persistent, full for regular)
+    indexer.build(force_rebuild=force_rebuild)
+    
     coder = LocalCoder(model_name=model_name, device=device, max_model_len=max_model_len, quantize=quantize)
     planner = LocalCoder(model_name=planner_model or model_name, device=device, max_model_len=max_model_len, quantize=quantize)
     judge = LocalCoder(model_name=judge_model or model_name, device=device, max_model_len=max_model_len, quantize=quantize)
@@ -145,15 +164,39 @@ def create_app(
     @app.get("/health")
     def health():
         return {"status": "ok", "repo": repo_root, "model": model_name}
+    
+    @app.get("/stats")
+    def get_stats():
+        if hasattr(indexer, 'get_stats'):
+            return indexer.get_stats()
+        else:
+            return {"status": "ok", "files_indexed": len(indexer.chunks), "indexer_type": "in-memory"}
 
     @app.post("/index")
     def reindex(req: IndexRequest):
         nonlocal indexer
         root = req.folder or repo_root
-        new_indexer = RepoIndexer(root, embed_model, max_chunk_chars=max_chunk, overlap=overlap)
-        new_indexer.build()
+        
+        if use_persistent_index:
+            new_indexer = PersistentRepoIndexer(
+                repo_root=root,
+                embed_model_name=embed_model,
+                max_chunk_chars=max_chunk,
+                overlap=overlap,
+                shibudb_host=shibudb_host,
+                shibudb_port=shibudb_port
+            )
+        else:
+            new_indexer = RepoIndexer(root, embed_model, max_chunk_chars=max_chunk, overlap=overlap)
+        
+        new_indexer.build(force_rebuild=True)
         indexer = new_indexer
-        return {"status": "ok", "files_indexed": len(indexer.chunks)}
+        
+        if hasattr(indexer, 'get_stats'):
+            stats = indexer.get_stats()
+            return {"status": "ok", "stats": stats}
+        else:
+            return {"status": "ok", "files_indexed": len(indexer.chunks)}
 
     @app.post("/query", response_model=QueryResponse)
     def query(req: QueryRequest):
@@ -296,6 +339,10 @@ if __name__ == "__main__":
         max_loops=args.max_loops,
         quantize=args.quantize,
         max_model_len=args.max_model_len,
+        use_persistent_index=args.use_persistent_index,
+        shibudb_host=args.shibudb_host,
+        shibudb_port=args.shibudb_port,
+        force_rebuild=args.force_rebuild,
     )
 
     import uvicorn

@@ -1,11 +1,12 @@
 # RepoCoder API
 
-A FastAPI server that loads a local code LLM and indexes a codebase folder into a FAISS vector store for code-aware chunking and retrieval. Serves an HTTP API to answer repo questions and propose patch diffs.
+A FastAPI server that loads a local code LLM and indexes a codebase folder into a ShibuDB vector database for code-aware chunking and retrieval. Serves an HTTP API to answer repo questions and propose patch diffs.
 
 ## Features
 
 - **Local LLM Integration**: Uses DeepSeek-Coder-V2-Lite-Instruct by default
-- **Code-Aware Indexing**: FAISS vector store with intelligent code chunking
+- **Persistent Indexing**: ShibuDB vector database for incremental updates (no re-indexing on restart!)
+- **Code-Aware Indexing**: ShibuDB vector search with intelligent code chunking (replaces FAISS)
 - **Multi-Agent Pipeline**: Optional planner → coder → judge workflow
 - **RESTful API**: Clean endpoints for querying and applying changes
 
@@ -13,24 +14,55 @@ A FastAPI server that loads a local code LLM and indexes a codebase folder into 
 
 ```
 repocoder/
-├── app.py              # Main FastAPI application
-├── config.py           # Configuration and CLI parsing
-├── models.py           # Pydantic request/response models
-├── indexer.py          # Repository indexing and retrieval
-├── llm.py              # Local LLM wrapper
-├── prompts.py          # Prompt templates
-├── utils.py            # Utility functions
-├── requirements.txt    # Python dependencies
-└── README.md          # This file
+├── app.py                    # Main FastAPI application
+├── config.py                 # Configuration and CLI parsing
+├── models.py                 # Pydantic request/response models
+├── indexer.py                # Repository indexing and retrieval
+├── persistent_indexer.py     # ShibuDB persistent indexing
+├── llm.py                    # Local LLM wrapper
+├── prompts.py                # Prompt templates
+├── utils.py                  # Utility functions
+├── requirements.txt          # Python dependencies
+├── SHIBUDB_SETUP.md         # ShibuDB setup guide
+└── README.md                # This file
 ```
 
 ## Installation
 
-```bash
-pip install -r requirements.txt
-```
+### Prerequisites
+
+1. **Install ShibuDB** (recommended for persistent indexing):
+   - Download from [https://shibudb.org/](https://shibudb.org/)
+   - See [SHIBUDB_SETUP.md](SHIBUDB_SETUP.md) for detailed setup instructions
+   - Start server: `sudo shibudb start 4444`
+
+2. **Install Python dependencies**:
+   ```bash
+   pip install -r requirements.txt
+   ```
 
 ## Usage
+
+### With Persistent Indexing (Recommended)
+
+```bash
+# Start ShibuDB server
+sudo shibudb start 4444
+
+# Start RepoCoder with persistent indexing
+python app.py --repo /path/to/your/repo --use-persistent-index
+```
+
+**Benefits**:
+- ⚡ **Fast startup**: Only indexes changed files
+- 💾 **Persistent storage**: No re-indexing on restart
+- 🔄 **Incremental updates**: Only processes what's new/modified
+
+### Without Persistent Indexing (Legacy)
+
+```bash
+python app.py --repo /path/to/your/repo --no-use-persistent-index
+```
 
 ### Basic Setup
 

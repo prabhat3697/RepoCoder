@@ -36,6 +36,12 @@ def parse_args():
     p.add_argument("--use-small-models", action="store_true", default=True, help="Use small models optimized for local PC")
     p.add_argument("--quantize", action="store_true", help="Use quantized models for even smaller memory footprint")
     
+    # ShibuDB persistent indexing options
+    p.add_argument("--use-persistent-index", action="store_true", default=True, help="Use ShibuDB for persistent indexing")
+    p.add_argument("--shibudb-host", default="localhost", help="ShibuDB server host")
+    p.add_argument("--shibudb-port", type=int, default=4444, help="ShibuDB server port")
+    p.add_argument("--force-rebuild", action="store_true", help="Force rebuild of the entire index")
+    
     return p.parse_args()
 
 
