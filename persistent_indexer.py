@@ -13,6 +13,7 @@ from datetime import datetime
 
 from shibudb_client import ShibuDbClient, connect
 from rich.console import Console
+from rich.progress import Progress, TaskID, BarColumn, TextColumn, TimeElapsedColumn, TimeRemainingColumn
 
 from config import CODE_EXTS, IGNORE_DIRS
 from indexer import Chunk
@@ -319,8 +320,6 @@ class PersistentRepoIndexer:
             rel_path = str(pathlib.Path(chunks[0].path).relative_to(self.repo_root))
             self.client.put(f"file_chunks_{rel_path}", json.dumps(chunk_ids), space=meta_space_name)
             
-            console.print(f"[green]Stored {len(chunks)} chunks in ShibuDB (vectors in {vector_space_name}, metadata in {meta_space_name})[/]")
-            
         except Exception as e:
             console.print(f"[red]Error storing chunks in ShibuDB: {e}[/]")
             import traceback
@@ -332,7 +331,7 @@ class PersistentRepoIndexer:
         return header + chunk.text
     
     def build(self, force_rebuild: bool = False):
-        """Build or update the index."""
+        """Build or update the index with progress bar."""
         console.print(f"[bold cyan]Building persistent index for:[/] {self.repo_root}")
         
         # Connect to ShibuDB
@@ -361,30 +360,54 @@ class PersistentRepoIndexer:
             console.print("[green]No changes detected - index is up to date![/]")
             return
         
-        console.print(f"[blue]Indexing {len(files_to_process)} files...[/]")
-        
-        total_chunks = 0
-        for file_path in files_to_process:
-            console.print(f"[cyan]Processing:[/] {file_path.relative_to(self.repo_root)}")
+        # Create progress bar
+        with Progress(
+            TextColumn("[bold blue]Indexing files"),
+            BarColumn(bar_width=None),
+            "[progress.percentage]{task.percentage:>3.1f}%",
+            "•",
+            TextColumn("[bold green]{task.completed}/{task.total} files"),
+            "•",
+            TimeElapsedColumn(),
+            "•",
+            TimeRemainingColumn(),
+            console=console,
+            expand=True
+        ) as progress:
             
-            # Index the file
-            chunks = self._index_file(file_path)
-            if chunks:
-                # Store in ShibuDB
-                self._store_chunks_in_shibudb(chunks)
-                
-                # Update metadata
+            # Create main task
+            task = progress.add_task(
+                f"Processing {len(files_to_process)} files...", 
+                total=len(files_to_process)
+            )
+            
+            total_chunks = 0
+            for i, file_path in enumerate(files_to_process):
+                # Update progress description with current file
                 rel_path = str(file_path.relative_to(self.repo_root))
-                meta = self._get_file_metadata(file_path)
-                meta.chunk_count = len(chunks)
-                self.file_metadata[rel_path] = meta
+                progress.update(
+                    task, 
+                    description=f"[cyan]Processing:[/] {rel_path}",
+                    advance=1
+                )
                 
-                total_chunks += len(chunks)
+                # Index the file
+                chunks = self._index_file(file_path)
+                if chunks:
+                    # Store in ShibuDB
+                    self._store_chunks_in_shibudb(chunks)
+                    
+                    # Update metadata
+                    meta = self._get_file_metadata(file_path)
+                    meta.chunk_count = len(chunks)
+                    self.file_metadata[rel_path] = meta
+                    
+                    total_chunks += len(chunks)
         
         # Save updated metadata
         self._save_file_metadata()
         
-        console.print(f"[green]Index updated successfully![/] Processed {len(files_to_process)} files, {total_chunks} chunks")
+        console.print(f"[green]✅ Index updated successfully![/] Processed {len(files_to_process)} files, {total_chunks} chunks")
     
     def retrieve(self, query: str, top_k: int = 12) -> List[Chunk]:
         """Retrieve relevant chunks using ShibuDB vector search."""
