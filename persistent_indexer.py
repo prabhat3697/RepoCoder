@@ -146,7 +146,7 @@ class PersistentRepoIndexer:
         try:
             meta_space_name = f"{self.space_name}_meta"
             response = self.client.get("file_metadata", space=meta_space_name)
-            if response.get("status") == "success":
+            if response.get("status") == "OK":
                 metadata_dict = json.loads(response["value"])
                 self.file_metadata = {
                     path: FileMetadata(**data) 
@@ -223,7 +223,7 @@ class PersistentRepoIndexer:
             # Get all vector IDs for this file
             response = self.client.get(f"file_chunks_{rel_path}", space=meta_space_name)
             
-            if response.get("status") == "success":
+            if response.get("status") == "OK":
                 chunk_ids = json.loads(response["value"])
                 console.print(f"[blue]Removing {len(chunk_ids)} chunks for deleted file: {rel_path}[/]")
                 
@@ -287,9 +287,9 @@ class PersistentRepoIndexer:
             vector_space_name = f"{self.space_name}_vectors"
             meta_space_name = f"{self.space_name}_meta"
             
-            # Prepare embeddings
+            # Prepare embeddings (disable progress bar to avoid new lines)
             texts = [self._prep_embed_text(chunk) for chunk in chunks]
-            embeddings = embedder.encode(texts, normalize_embeddings=True)
+            embeddings = embedder.encode(texts, normalize_embeddings=True, show_progress_bar=False)
             
             # Store each chunk with proper vector ID
             chunk_ids = []
@@ -426,7 +426,7 @@ class PersistentRepoIndexer:
             # Search in ShibuDB vector space
             response = self.client.search_topk(query_embedding.tolist(), k=top_k, space=vector_space_name)
             
-            if response.get("status") != "success":
+            if response.get("status") != "OK":
                 console.print(f"[red]Vector search failed: {response}[/]")
                 return []
             
@@ -443,7 +443,7 @@ class PersistentRepoIndexer:
                     # Get chunk metadata from metadata space
                     chunk_meta_response = self.client.get(f"chunk_{vector_id}", space=meta_space_name)
                     
-                    if chunk_meta_response.get("status") == "success":
+                    if chunk_meta_response.get("status") == "OK":
                         chunk_meta = json.loads(chunk_meta_response["value"])
                         chunk = Chunk(
                             path=chunk_meta["path"],

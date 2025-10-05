@@ -85,7 +85,7 @@ class RepoIndexer:
             all_texts.extend(self._prep_embed_text(c) for c in chunks)
 
         console.print(f"Chunked into {len(self.chunks)} pieces. Embedding…")
-        embeddings = self.embedder.encode(all_texts, show_progress_bar=True, normalize_embeddings=True)
+        embeddings = self.embedder.encode(all_texts, show_progress_bar=False, normalize_embeddings=True)
         
         # Store embeddings for simple cosine similarity (no FAISS)
         self.embeddings = [emb for emb in embeddings]
