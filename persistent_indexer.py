@@ -479,14 +479,16 @@ class PersistentRepoIndexer:
             
             # Search in ShibuDB vector space
             response = self.client.search_topk(query_embedding.tolist(), k=top_k, space=vector_space_name)
+            console.print(query_embedding.tolist())
+            console.print(response)
             
             if response.get("status") != "OK":
                 console.print(f"[red]Vector search failed: {response}[/]")
                 return []
             
             # Direct response structure - status and results at top level
-            if response.get("status") == "OK" and "results" in response:
-                results = response["results"]
+            if response.get("status") == "OK" and "message" in response:
+                results = json.loads(response["message"], strict=False)
             else:
                 console.print(f"[red]No results found in response[/]")
                 return []
