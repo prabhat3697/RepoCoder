@@ -145,16 +145,159 @@ class PersistentRepoIndexer:
         
         try:
             meta_space_name = f"{self.space_name}_meta"
-            response = self.client.get("file_metadata", space=meta_space_name)
+            
+            # Get the list of file paths
+            response = self.client.get("file_metadata_list", space=meta_space_name)
+            console.print(f"[dim]Debug: file_metadata_list response: {response}[/]")
+            
             if response.get("status") == "OK":
-                metadata_dict = json.loads(response["value"])
-                self.file_metadata = {
-                    path: FileMetadata(**data) 
-                    for path, data in metadata_dict.items()
-                }
+                # Handle nested response structure
+                if "message" in response:
+                    try:
+                        # Parse the nested JSON in message
+                        inner_response = json.loads(response["message"])
+                        if inner_response.get("status") == "OK" and "value" in inner_response:
+                            # Now expecting simple newline-separated string, not JSON array
+                            file_paths_str = inner_response["value"]
+                            file_paths = file_paths_str.strip().split('\n') if file_paths_str.strip() else []
+                        else:
+                            console.print(f"[yellow]No file paths found in nested response[/]")
+                            self.file_metadata = {}
+                            return
+                    except json.JSONDecodeError as e:
+                        console.print(f"[yellow]JSON parsing error in message: {e}[/]")
+                        console.print(f"[dim]Raw message: {response['message'][:200]}...[/]")
+                        # Try to extract file paths manually from the malformed JSON
+                        try:
+                            # Look for the string pattern in the message
+                            message = response["message"]
+                            # Find the value field and extract the string
+                            value_start = message.find('"value":"')
+                            if value_start != -1:
+                                # Find the start and end of the string value
+                                str_start = message.find('"', value_start + 9) + 1
+                                str_end = message.rfind('"')
+                                if str_start > 0 and str_end > str_start:
+                                    file_paths_str = message[str_start:str_end]
+                                    # Replace escaped newlines with actual newlines
+                                    file_paths_str = file_paths_str.replace('\\n', '\n')
+                                    file_paths = file_paths_str.strip().split('\n') if file_paths_str.strip() else []
+                                    console.print(f"[blue]Recovered {len(file_paths)} file paths from malformed JSON[/]")
+                                else:
+                                    console.print(f"[yellow]Could not extract string value[/]")
+                                    self.file_metadata = {}
+                                    return
+                            else:
+                                console.print(f"[yellow]Could not find value field[/]")
+                                self.file_metadata = {}
+                                return
+                        except Exception as e2:
+                            console.print(f"[yellow]Could not recover file paths: {e2}[/]")
+                            self.file_metadata = {}
+                            return
+                elif "value" in response:
+                    # Direct value access - expecting simple string
+                    file_paths_str = response["value"]
+                    file_paths = file_paths_str.strip().split('\n') if file_paths_str.strip() else []
+                else:
+                    console.print(f"[yellow]No value found in response[/]")
+                    self.file_metadata = {}
+                    return
+                
+                console.print(f"[dim]Debug: Found {len(file_paths)} file paths in metadata[/]")
+                
+                # Load each file's metadata individually
+                self.file_metadata = {}
+                for path in file_paths:
+                    safe_key = f"file_meta_{path.replace('/', '_').replace('\\', '_')}"
+                    meta_response = self.client.get(safe_key, space=meta_space_name)
+                    console.print(f"[dim]Debug: {safe_key} response: {meta_response}[/]")
+                    
+                    if meta_response.get("status") == "OK":
+                        # Handle nested response structure for individual files too
+                        if "message" in meta_response:
+                            try:
+                                inner_response = json.loads(meta_response["message"])
+                                if inner_response.get("status") == "OK" and "value" in inner_response:
+                                    # Now expecting simple pipe-separated string, not JSON
+                                    meta_str = inner_response["value"]
+                                    parts = meta_str.split('|')
+                                    if len(parts) == 6:
+                                        self.file_metadata[path] = FileMetadata(
+                                            path=parts[0],
+                                            size=int(parts[1]),
+                                            mtime=float(parts[2]),
+                                            hash=parts[3],
+                                            indexed_at=parts[4],
+                                            chunk_count=int(parts[5])
+                                        )
+                                    else:
+                                        console.print(f"[yellow]Warning: Invalid metadata format for {path}[/]")
+                                else:
+                                    console.print(f"[yellow]Warning: Could not parse metadata for {path}[/]")
+                            except (json.JSONDecodeError, ValueError, IndexError) as e:
+                                console.print(f"[yellow]Warning: Error parsing metadata for {path}: {e}[/]")
+                                # Try to recover the metadata from malformed JSON
+                                try:
+                                    message = meta_response["message"]
+                                    # Find the value field and extract the string
+                                    value_start = message.find('"value":"')
+                                    if value_start != -1:
+                                        # Find the start and end of the string value
+                                        str_start = message.find('"', value_start + 9) + 1
+                                        str_end = message.rfind('"')
+                                        if str_start > 0 and str_end > str_start:
+                                            meta_str = message[str_start:str_end]
+                                            # Replace escaped pipes with actual pipes
+                                            meta_str = meta_str.replace('\\|', '|')
+                                            parts = meta_str.split('|')
+                                            if len(parts) == 6:
+                                                self.file_metadata[path] = FileMetadata(
+                                                    path=parts[0],
+                                                    size=int(parts[1]),
+                                                    mtime=float(parts[2]),
+                                                    hash=parts[3],
+                                                    indexed_at=parts[4],
+                                                    chunk_count=int(parts[5])
+                                                )
+                                                console.print(f"[blue]Recovered metadata for {path}[/]")
+                                            else:
+                                                console.print(f"[yellow]Invalid recovered metadata format for {path}[/]")
+                                        else:
+                                            console.print(f"[yellow]Could not extract metadata string for {path}[/]")
+                                    else:
+                                        console.print(f"[yellow]Could not find value field for {path}[/]")
+                                except Exception as e2:
+                                    console.print(f"[yellow]Could not recover metadata for {path}: {e2}[/]")
+                        elif "value" in meta_response:
+                            # Direct value access - expecting simple pipe-separated string
+                            meta_str = meta_response["value"]
+                            parts = meta_str.split('|')
+                            if len(parts) == 6:
+                                self.file_metadata[path] = FileMetadata(
+                                    path=parts[0],
+                                    size=int(parts[1]),
+                                    mtime=float(parts[2]),
+                                    hash=parts[3],
+                                    indexed_at=parts[4],
+                                    chunk_count=int(parts[5])
+                                )
+                            else:
+                                console.print(f"[yellow]Warning: Invalid metadata format for {path}[/]")
+                        else:
+                            console.print(f"[yellow]Warning: No value found for {path}[/]")
+                    else:
+                        console.print(f"[yellow]Warning: Could not load metadata for {path}[/]")
+                
                 console.print(f"[blue]Loaded metadata for {len(self.file_metadata)} files[/]")
+            else:
+                console.print(f"[yellow]No existing metadata found (status: {response.get('status')}), starting fresh[/]")
+                self.file_metadata = {}
         except Exception as e:
             console.print(f"[yellow]Could not load file metadata: {e}[/]")
+            console.print(f"[dim]Debug: Exception details: {type(e).__name__}: {str(e)}[/]")
+            import traceback
+            console.print(f"[dim]Debug: Traceback: {traceback.format_exc()}[/]")
             self.file_metadata = {}
     
     def _save_file_metadata(self):
@@ -164,14 +307,27 @@ class PersistentRepoIndexer:
         
         try:
             meta_space_name = f"{self.space_name}_meta"
-            metadata_dict = {
-                path: asdict(meta) 
-                for path, meta in self.file_metadata.items()
-            }
-            self.client.put("file_metadata", json.dumps(metadata_dict), space=meta_space_name)
+            
+            # Store each file's metadata under its own key
+            for path, meta in self.file_metadata.items():
+                # Use file path as key (with safe encoding)
+                safe_key = f"file_meta_{path.replace('/', '_').replace('\\', '_')}"
+                # Store as simple string, not JSON
+                meta_str = f"{meta.path}|{meta.size}|{meta.mtime}|{meta.hash}|{meta.indexed_at}|{meta.chunk_count}"
+                response = self.client.put(safe_key, meta_str, space=meta_space_name)
+                console.print(f"[dim]Debug: Saved {safe_key}, response: {response}[/]")
+            
+            # Store the list of all file paths as simple newline-separated string
+            file_paths = list(self.file_metadata.keys())
+            file_paths_str = "\n".join(file_paths)
+            response = self.client.put("file_metadata_list", file_paths_str, space=meta_space_name)
+            console.print(f"[dim]Debug: Saved file_metadata_list, response: {response}[/]")
+            
             console.print(f"[blue]Saved metadata for {len(self.file_metadata)} files[/]")
         except Exception as e:
             console.print(f"[yellow]Could not save file metadata: {e}[/]")
+            import traceback
+            console.print(f"[dim]Debug: Traceback: {traceback.format_exc()}[/]")
     
     def _get_changed_files(self) -> Tuple[List[pathlib.Path], List[pathlib.Path], List[pathlib.Path]]:
         """Get lists of new, modified, and deleted files."""
@@ -217,6 +373,10 @@ class PersistentRepoIndexer:
         # Remove from metadata
         if rel_path in self.file_metadata:
             del self.file_metadata[rel_path]
+            
+            # Remove file metadata from ShibuDB
+            safe_key = f"file_meta_{rel_path.replace('/', '_').replace('\\', '_')}"
+            self.client.delete(safe_key, space=meta_space_name)
         
         # Remove chunks from metadata space
         try:
@@ -224,7 +384,19 @@ class PersistentRepoIndexer:
             response = self.client.get(f"file_chunks_{rel_path}", space=meta_space_name)
             
             if response.get("status") == "OK":
-                chunk_ids = json.loads(response["value"])
+                # Handle nested response structure
+                if "message" in response:
+                    inner_response = json.loads(response["message"])
+                    if inner_response.get("status") == "OK" and "value" in inner_response:
+                        chunk_ids = json.loads(inner_response["value"])
+                    else:
+                        console.print(f"[yellow]No chunks found for deleted file: {rel_path}[/]")
+                        return
+                elif "value" in response:
+                    chunk_ids = json.loads(response["value"])
+                else:
+                    console.print(f"[yellow]No chunks found for deleted file: {rel_path}[/]")
+                    return
                 console.print(f"[blue]Removing {len(chunk_ids)} chunks for deleted file: {rel_path}[/]")
                 
                 # Remove chunk metadata
@@ -430,11 +602,21 @@ class PersistentRepoIndexer:
                 console.print(f"[red]Vector search failed: {response}[/]")
                 return []
             
-            # Reconstruct chunks from vector search results
-            chunks = []
-            results = response.get("results", [])
+            # Handle nested response structure for search results
+            if "message" in response:
+                inner_response = json.loads(response["message"])
+                if inner_response.get("status") == "OK" and "results" in inner_response:
+                    results = inner_response["results"]
+                else:
+                    console.print(f"[red]No results found in nested response[/]")
+                    return []
+            else:
+                results = response.get("results", [])
+            
             console.print(f"[blue]Found {len(results)} similar vectors[/]")
             
+            # Reconstruct chunks from vector search results
+            chunks = []
             for result in results:
                 vector_id = result.get("id")
                 distance = result.get("distance", 0)
@@ -444,7 +626,20 @@ class PersistentRepoIndexer:
                     chunk_meta_response = self.client.get(f"chunk_{vector_id}", space=meta_space_name)
                     
                     if chunk_meta_response.get("status") == "OK":
-                        chunk_meta = json.loads(chunk_meta_response["value"])
+                        # Handle nested response structure
+                        if "message" in chunk_meta_response:
+                            inner_response = json.loads(chunk_meta_response["message"])
+                            if inner_response.get("status") == "OK" and "value" in inner_response:
+                                chunk_meta = json.loads(inner_response["value"])
+                            else:
+                                console.print(f"[yellow]Warning: Could not parse metadata for vector {vector_id}[/]")
+                                continue
+                        elif "value" in chunk_meta_response:
+                            chunk_meta = json.loads(chunk_meta_response["value"])
+                        else:
+                            console.print(f"[yellow]Warning: No value found for vector {vector_id}[/]")
+                            continue
+                        
                         chunk = Chunk(
                             path=chunk_meta["path"],
                             start=chunk_meta["start"],
