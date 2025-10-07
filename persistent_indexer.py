@@ -38,7 +38,9 @@ class PersistentRepoIndexer:
     def __init__(self, repo_root: str, embed_model_name: str, 
                  max_chunk_chars: int = 1600, overlap: int = 200,
                  shibudb_host: str = "localhost", shibudb_port: int = 4444):
-        self.repo_root = str(pathlib.Path(repo_root).resolve())
+        # Canonicalize the repo root so the same folder always maps to the same ShibuDB space
+        resolved_root = pathlib.Path(repo_root).resolve()
+        self.repo_root = str(resolved_root)
         self.embed_model_name = embed_model_name
         self.max_chunk_chars = max_chunk_chars
         self.overlap = overlap
@@ -49,7 +51,13 @@ class PersistentRepoIndexer:
         
         # Initialize ShibuDB client
         self.client = None
-        self.space_name = f"repocoder_{hashlib.md5(self.repo_root.encode()).hexdigest()[:8]}"
+        # Space naming strategy:
+        #   Stable per (canonical repo path, embedding model)
+        #   This guarantees ~/code1, ~/code2, ~/code3 each get different spaces,
+        #   and switching between them will reuse their own spaces.
+        repo_hash = hashlib.md5(self.repo_root.encode()).hexdigest()[:8]
+        embed_hash = hashlib.md5(self.embed_model_name.encode()).hexdigest()[:6]
+        self.space_name = f"repocoder_{repo_hash}_{embed_hash}"
         
         # File tracking
         self.file_metadata: Dict[str, FileMetadata] = {}
@@ -57,6 +65,9 @@ class PersistentRepoIndexer:
         # Initialize embedding model (lazy loading)
         self.embedder = None
         self.embedding_dimension = None
+        
+        # Track whether metadata was loaded from an existing index
+        self.index_loaded_from_meta = False
         
     def _get_embedder(self):
         """Lazy load the embedding model and get its dimension."""
@@ -155,9 +166,12 @@ class PersistentRepoIndexer:
                 file_paths_str = response["value"]
                 file_paths = file_paths_str.strip().split('\n') if file_paths_str.strip() else []
                 console.print(f"[dim]Debug: Found {len(file_paths)} file paths in metadata[/]")
+                # Mark that we successfully loaded existing metadata (even if empty list)
+                self.index_loaded_from_meta = True
             else:
                 console.print(f"[yellow]No file paths found (status: {response.get('status')}), starting fresh[/]")
                 self.file_metadata = {}
+                self.index_loaded_from_meta = False
                 return
                 
             # Load each file's metadata individually
@@ -194,6 +208,7 @@ class PersistentRepoIndexer:
             import traceback
             console.print(f"[dim]Debug: Traceback: {traceback.format_exc()}[/]")
             self.file_metadata = {}
+            self.index_loaded_from_meta = False
     
     def _save_file_metadata(self):
         """Save file metadata to ShibuDB metadata space."""
@@ -401,6 +416,10 @@ class PersistentRepoIndexer:
         if force_rebuild:
             console.print("[yellow]Force rebuild requested - clearing existing index[/]")
             self.file_metadata = {}
+        elif self.index_loaded_from_meta:
+            console.print("[green]Existing index detected - performing incremental update[/]")
+        else:
+            console.print("[yellow]No existing index detected - creating new index[/]")
         
         # Get changed files
         new_files, modified_files, deleted_files = self._get_changed_files()
@@ -544,5 +563,6 @@ class PersistentRepoIndexer:
             "metadata_space": f"{self.space_name}_meta",
             "shibudb_connected": self.client is not None,
             "embedding_dimension": self.embedding_dimension,
-            "indexer_type": "shibudb_two_spaces"
+            "indexer_type": "shibudb_two_spaces",
+            "existing_index_loaded": self.index_loaded_from_meta
         }
