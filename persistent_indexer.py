@@ -163,7 +163,9 @@ class PersistentRepoIndexer:
             # Load each file's metadata individually
             self.file_metadata = {}
             for path in file_paths:
-                safe_key = f"file_meta_{path.replace('/', '_').replace('\\', '_')}"
+                # Create safe key by replacing path separators
+                safe_path = path.replace('/', '_').replace('\\', '_')
+                safe_key = f"file_meta_{safe_path}"
                 meta_response = self.client.get(safe_key, space=meta_space_name)
                 console.print(f"[dim]Debug: {safe_key} response: {meta_response}[/]")
                 
@@ -204,7 +206,8 @@ class PersistentRepoIndexer:
             # Store each file's metadata under its own key
             for path, meta in self.file_metadata.items():
                 # Use file path as key (with safe encoding)
-                safe_key = f"file_meta_{path.replace('/', '_').replace('\\', '_')}"
+                safe_path = path.replace('/', '_').replace('\\', '_')
+                safe_key = f"file_meta_{safe_path}"
                 # Store as simple string, not JSON
                 meta_str = f"{meta.path}|{meta.size}|{meta.mtime}|{meta.hash}|{meta.indexed_at}|{meta.chunk_count}"
                 response = self.client.put(safe_key, meta_str, space=meta_space_name)
@@ -268,7 +271,8 @@ class PersistentRepoIndexer:
             del self.file_metadata[rel_path]
             
             # Remove file metadata from ShibuDB
-            safe_key = f"file_meta_{rel_path.replace('/', '_').replace('\\', '_')}"
+            safe_path = rel_path.replace('/', '_').replace('\\', '_')
+            safe_key = f"file_meta_{safe_path}"
             self.client.delete(safe_key, space=meta_space_name)
         
         # Remove chunks from metadata space
