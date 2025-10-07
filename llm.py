@@ -40,15 +40,17 @@ class LocalCoder:
             model_kwargs["torch_dtype"] = torch.float16
             model_kwargs["device_map"] = "auto"
         
-        if quantize:
-            # Enable quantization for smaller memory footprint
+        if quantize and device != "cpu":
+            # Enable quantization for smaller memory footprint (only on GPU)
             model_kwargs["load_in_8bit"] = True
             console.print("[yellow]Using 8-bit quantization for smaller memory footprint[/]")
+        elif quantize and device == "cpu":
+            console.print("[yellow]Quantization skipped on CPU - not supported[/]")
         
         self.model = AutoModelForCausalLM.from_pretrained(model_name, **model_kwargs)
         
         # Move to device if not using device_map
-        if device != "auto" and not quantize:
+        if device != "auto" and not (quantize and device != "cpu"):
             self.model = self.model.to(device)
         
         self.max_model_len = max_model_len

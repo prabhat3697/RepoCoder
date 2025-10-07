@@ -40,13 +40,17 @@ from typing import List, Dict, Optional, Any, Tuple
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from rich.console import Console
+
+console = Console()
 
 # Import our modular components
-from config import parse_args
+from config import parse_args, get_environment_defaults
 from models import IndexRequest, QueryRequest, QueryResponse, ApplyRequest
 from indexer import RepoIndexer
 from persistent_indexer import PersistentRepoIndexer
 from llm import LocalCoder
+from query_router import QueryRouter, create_default_model_configs
 from prompts import SYSTEM_TEMPLATE, USER_TEMPLATE, PLANNER_SYSTEM, PLANNER_USER, JUDGE_SYSTEM, JUDGE_USER, SIMPLE_SYSTEM_TEMPLATE, SIMPLE_USER_TEMPLATE
 from utils import make_context, apply_unified_diff
 
@@ -115,7 +119,8 @@ def parse_simple_response(text: str) -> dict:
 
 def create_app(
         repo_root: str,
-        model_name: str,
+        models: List[str],
+        primary_model: str,
         embed_model: str,
         max_chunk: int,
         overlap: int,
@@ -131,6 +136,7 @@ def create_app(
         shibudb_host: str = "localhost",
         shibudb_port: int = 4444,
         force_rebuild: bool = False,
+        enable_routing: bool = True,
 ):
     # Choose indexer based on configuration
     if use_persistent_index:
@@ -148,9 +154,45 @@ def create_app(
     # Build index (incremental for persistent, full for regular)
     indexer.build(force_rebuild=force_rebuild)
     
-    coder = LocalCoder(model_name=model_name, device=device, max_model_len=max_model_len, quantize=quantize)
-    planner = LocalCoder(model_name=planner_model or model_name, device=device, max_model_len=max_model_len, quantize=quantize)
-    judge = LocalCoder(model_name=judge_model or model_name, device=device, max_model_len=max_model_len, quantize=quantize)
+    # Load multiple models for intelligent routing
+    loaded_models = {}
+    model_configs = create_default_model_configs()
+    
+    console.print(f"[bold cyan]Loading {len(models)} models for intelligent routing...[/]")
+    for model_name in models:
+        try:
+            console.print(f"[blue]Loading model:[/] {model_name}")
+            loaded_models[model_name] = LocalCoder(
+                model_name=model_name, 
+                device=device, 
+                max_model_len=max_model_len, 
+                quantize=quantize
+            )
+            console.print(f"[green]✅ Loaded:[/] {model_name}")
+        except Exception as e:
+            console.print(f"[red]❌ Failed to load {model_name}:[/] {e}")
+            console.print(f"[yellow]Continuing with other models...[/]")
+    
+    if not loaded_models:
+        raise RuntimeError("No models could be loaded!")
+    
+    # Set up query router
+    router = QueryRouter(model_configs) if enable_routing else None
+    
+    # Set primary model
+    if primary_model and primary_model in loaded_models:
+        coder = loaded_models[primary_model]
+    else:
+        coder = list(loaded_models.values())[0]  # Use first available model
+    
+    # Set up planner and judge models
+    planner = loaded_models.get(planner_model or primary_model, coder)
+    judge = loaded_models.get(judge_model or primary_model, coder)
+    
+    console.print(f"[green]✅ Primary model:[/] {coder.model_name}")
+    console.print(f"[green]✅ Available models:[/] {list(loaded_models.keys())}")
+    if router:
+        console.print(f"[green]✅ Query routing enabled[/]")
 
     app = FastAPI(title="RepoCoder API", version="1.1")
     app.add_middleware(
@@ -201,11 +243,23 @@ def create_app(
     @app.post("/query", response_model=QueryResponse)
     def query(req: QueryRequest):
         t0 = time.time()
+        
+        # Intelligent query routing
+        if router and len(loaded_models) > 1:
+            selected_model_name, intent = router.route_query(req.prompt, list(loaded_models.keys()))
+            selected_model = loaded_models[selected_model_name]
+            console.print(f"[blue]Routing query to:[/] {selected_model_name} ({intent.query_type.value})")
+        else:
+            selected_model = coder
+            selected_model_name = coder.model_name
+            intent = None
+        
+        # Retrieve relevant chunks
         chunks = indexer.retrieve(req.prompt, top_k=req.top_k)
         context = make_context(chunks, indexer.repo_root)
         
         # Use simplified prompts for small models
-        if coder.max_model_len <= 1024:
+        if selected_model.max_model_len <= 1024:
             system = SIMPLE_SYSTEM_TEMPLATE
             user = SIMPLE_USER_TEMPLATE.format(task=req.prompt, context=context[:2000])  # Limit context
         else:
@@ -213,19 +267,31 @@ def create_app(
             user = USER_TEMPLATE.format(task=req.prompt, k=req.top_k, context=context)
         
         # Ensure max_new_tokens doesn't exceed model capacity
-        safe_max_tokens = min(req.max_new_tokens, coder.max_model_len // 2)
-        out = coder.chat(system=system, user=user, max_new_tokens=safe_max_tokens, temperature=req.temperature)
+        safe_max_tokens = min(req.max_new_tokens, selected_model.max_model_len // 2)
+        out = selected_model.chat(system=system, user=user, max_new_tokens=safe_max_tokens, temperature=req.temperature)
+        
         # Try to parse JSON strictly; if it fails, wrap as analysis-only
         try:
             parsed = json.loads(out)
         except Exception:
             # For small models, try to extract structured information from text
-            if coder.max_model_len <= 1024:
+            if selected_model.max_model_len <= 1024:
                 parsed = parse_simple_response(out)
             else:
                 parsed = {"analysis": out, "plan": "", "changes": []}
+        
+        # Add routing information to response
+        if intent:
+            parsed["routing"] = {
+                "selected_model": selected_model_name,
+                "query_type": intent.query_type.value,
+                "complexity": intent.complexity,
+                "confidence": intent.confidence,
+                "reasoning": intent.reasoning
+            }
+        
         took_ms = int((time.time() - t0) * 1000)
-        return QueryResponse(model=model_name, took_ms=took_ms, retrieved=len(chunks), result=parsed)
+        return QueryResponse(model=selected_model_name, took_ms=took_ms, retrieved=len(chunks), result=parsed)
 
     @app.post("/query_plus", response_model=QueryResponse)
     def query_plus(req: QueryRequest):
@@ -325,24 +391,38 @@ if __name__ == "__main__":
         print(f"Repo path not found: {repo_root}")
         sys.exit(1)
 
+    # Apply environment defaults if needed
+    env_defaults = get_environment_defaults(args.environment)
+    
+    # Use environment defaults for unspecified parameters
+    models = args.models if args.models else env_defaults["models"]
+    primary_model = args.primary_model or env_defaults["primary_model"]
+    max_model_len = args.max_model_len if args.max_model_len != 1024 else env_defaults["max_model_len"]
+    device = args.device if args.device != "cpu" else env_defaults["device"]
+    quantize = args.quantize or env_defaults["quantize"]
+    max_chunk = args.max_chunk_chars if args.max_chunk_chars != 800 else env_defaults["max_chunk_chars"]
+    overlap = args.chunk_overlap if args.chunk_overlap != 100 else env_defaults["chunk_overlap"]
+
     app = create_app(
         repo_root=repo_root,
-        model_name=args.model,
+        models=models,
+        primary_model=primary_model,
         embed_model=args.embed_model,
-        max_chunk=args.max_chunk_chars,
-        overlap=args.chunk_overlap,
-        device=args.device,
+        max_chunk=max_chunk,
+        overlap=overlap,
+        device=device,
         disable_apply=args.disable_apply,
         planner_model=args.planner_model,
         judge_model=args.judge_model,
         num_samples=args.num_samples,
         max_loops=args.max_loops,
-        quantize=args.quantize,
-        max_model_len=args.max_model_len,
+        quantize=quantize,
+        max_model_len=max_model_len,
         use_persistent_index=args.use_persistent_index,
         shibudb_host=args.shibudb_host,
         shibudb_port=args.shibudb_port,
         force_rebuild=args.force_rebuild,
+        enable_routing=args.enable_routing,
     )
 
     import uvicorn
