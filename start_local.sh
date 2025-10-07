@@ -12,7 +12,7 @@ export EMBED_MODEL="sentence-transformers/all-MiniLM-L6-v2"
 
 # Start the server with local-optimized settings
 python app.py \
-    --repo /Users/pawasthi/learn_source/repocoder \
+    --repo ~/learn_source/Db/shibudb.org \
     --environment local \
     --models microsoft/DialoGPT-small microsoft/CodeGPT-small-py \
     --primary-model microsoft/DialoGPT-small \
@@ -23,5 +23,4 @@ python app.py \
     --device cpu \
     --enable-routing \
     --host 0.0.0.0 \
-    --port 8000 \
-    --force-rebuild
+    --port 8000
