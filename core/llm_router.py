@@ -26,36 +26,16 @@ class LLMQueryRouter:
         self.indexer = indexer
         self.small_llm = small_llm
         
-        # Routing prompt for the small LLM
-        self.routing_prompt = """You are a query routing assistant. Analyze the user's query and decide how to handle it.
+        # Simple routing prompt optimized for small models
+        self.routing_prompt = """Route this query to the right strategy.
 
-Routing Options:
-1. METADATA - Query asks for repository statistics (file count, languages, size, etc.)
-   - Can be answered directly from file tree without reading code
-   - Examples: "How many files?", "What languages?", "Project size?"
+Strategy rules:
+- metadata: counting files, languages, sizes
+- file_specific: query mentions a filename
+- semantic: general code questions
+- structure: project organization
 
-2. FILE_SPECIFIC - Query asks about specific file(s)
-   - User mentions filename explicitly (deploy.rb, config.yml, etc.)
-   - Only needs chunks from that specific file
-   - Examples: "How does deploy.rb work?", "Explain config.yml"
-
-3. SEMANTIC - General code question without specific files
-   - Needs to search across all code
-   - Examples: "How does authentication work?", "Find all API endpoints"
-
-4. STRUCTURE - Query about project organization
-   - Needs file tree + minimal code
-   - Examples: "Project structure?", "Where is X located?"
-
-Return ONLY a JSON object:
-{
-  "strategy": "metadata" | "file_specific" | "semantic" | "structure",
-  "needs_code": true/false,
-  "needs_metadata": true/false,
-  "can_compute_directly": true/false,
-  "confidence": 0.0-1.0,
-  "reasoning": "brief explanation"
-}"""
+Return JSON only."""
     
     def route(self, query_analysis: QueryAnalysis) -> Dict[str, Any]:
         """Route query using small LLM for intelligent decision"""
@@ -66,16 +46,15 @@ Return ONLY a JSON object:
             console.print("[yellow]⚠ No LLM available, using fallback routing[/]")
             return self._fallback_route(query_analysis)
         
-        # Build routing query for small LLM
+        # Build simple routing query for small LLM
+        files_mentioned = [r.filename for r in query_analysis.file_references] if query_analysis.file_references else []
+        
         user_query = f"""Query: "{query_analysis.original_query}"
+Files mentioned: {files_mentioned if files_mentioned else "none"}
+Intent: {query_analysis.intent.value}
 
-Query Analysis:
-- Intent: {query_analysis.intent.value}
-- Complexity: {query_analysis.complexity.value}
-- File References: {[r.filename for r in query_analysis.file_references] if query_analysis.file_references else "None"}
-- Entities: {query_analysis.entities[:5] if query_analysis.entities else "None"}
-
-Decide the routing strategy."""
+Pick strategy: metadata, file_specific, semantic, or structure.
+JSON format: {{"strategy": "...", "reasoning": "..."}}"""
         
         try:
             # Use small LLM to make routing decision
