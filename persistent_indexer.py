@@ -502,8 +502,6 @@ class PersistentRepoIndexer:
             
             # Search in ShibuDB vector space
             response = self.client.search_topk(query_embedding.tolist(), k=top_k, space=vector_space_name)
-            console.print(query_embedding.tolist())
-            console.print(response)
             
             if response.get("status") != "OK":
                 console.print(f"[red]Vector search failed: {response}[/]")
