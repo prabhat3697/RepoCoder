@@ -33,12 +33,17 @@ class ResponseGenerator:
         system_prompt = self._build_system_prompt(query_analysis)
         user_prompt = self._build_user_prompt(query_analysis, context, repo_root)
         
-        # Execute model
+        # Let the model generate as much as it needs (use model's full capacity)
+        # Don't artificially limit the response
+        max_tokens = model_config.max_tokens // 2  # Use half of context for generation
+        
+        console.print(f"[cyan]→ Requesting {max_tokens} max_new_tokens from model (no artificial limits)[/]")
+        
         if self.llm_executor:
             output = self.llm_executor.chat(
                 system=system_prompt,
                 user=user_prompt,
-                max_new_tokens=min(500, model_config.max_tokens // 2),
+                max_new_tokens=max_tokens,
                 temperature=model_config.temperature
             )
         else:
@@ -122,9 +127,31 @@ class ResponseGenerator:
     def _parse_response(self, output: str, model_name: str) -> Response:
         """Parse model output into Response object"""
         
+        console.print(f"[cyan]→ Parsing model output (length: {len(output)} chars)[/]")
+        
+        # Sometimes the model wraps JSON in ```json ... ``` - extract it
+        if "```json" in output:
+            console.print("[yellow]→ Found JSON code block, extracting...[/]")
+            start = output.find("```json") + 7
+            end = output.find("```", start)
+            if end > start:
+                output = output[start:end].strip()
+                console.print(f"[green]✓ Extracted JSON from code block (length: {len(output)} chars)[/]")
+        
+        # Try to find JSON object in the output
+        if "{" in output and "}" in output:
+            # Extract everything from first { to last }
+            start = output.find("{")
+            end = output.rfind("}") + 1
+            json_str = output[start:end]
+            console.print(f"[cyan]→ Attempting to parse JSON (length: {len(json_str)} chars)[/]")
+        else:
+            json_str = output
+        
         # Try to parse as JSON
         try:
-            parsed = json.loads(output)
+            parsed = json.loads(json_str)
+            console.print(f"[green]✓ Successfully parsed JSON response[/]")
             return Response(
                 analysis=parsed.get("analysis", ""),
                 plan=parsed.get("plan", ""),
@@ -132,7 +159,9 @@ class ResponseGenerator:
                 model_used=model_name,
                 confidence=0.8
             )
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as e:
+            console.print(f"[red]✗ JSON parsing failed: {e}[/]")
+            console.print(f"[yellow]→ Falling back to plain text response[/]")
             # Fallback: treat as plain text
             return Response(
                 analysis=output,

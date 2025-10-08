@@ -126,13 +126,17 @@ class LocalCoder:
         else:
             inputs = {k: v.to(self.device) for k, v in inputs.items()}
         
-        console.print(f"[blue]→ Generating with max_new_tokens={min(max_new_tokens, 256)}, temperature={temperature}[/]")
+        # Use the requested max_new_tokens without artificial limits
+        # Let the model generate as much as it needs
+        actual_max_tokens = max_new_tokens
+        
+        console.print(f"[blue]→ Generating with max_new_tokens={actual_max_tokens} (no limits), temperature={temperature}[/]")
         
         with torch.no_grad():
             try:
                 outputs = self.model.generate(
                     **inputs,
-                    max_new_tokens=min(max_new_tokens, 256),  # Limit for small models
+                    max_new_tokens=actual_max_tokens,
                     do_sample=temperature > 0,
                     temperature=temperature,
                     top_p=top_p,
@@ -147,34 +151,63 @@ class LocalCoder:
                 return "I apologize, but I encountered an error while generating a response. Please try with a shorter prompt or different parameters."
         
         console.print(f"[blue]→ Decoding output (length: {len(outputs[0])} tokens)[/]")
+        
+        # First decode WITH special tokens to see the structure
+        out_with_tokens = self.tokenizer.decode(outputs[0], skip_special_tokens=False)
+        
+        # Then decode without special tokens for cleaner output
         out = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
         
         console.print("\n[bold cyan]" + "="*80 + "[/]")
-        console.print("[bold cyan]RAW MODEL OUTPUT:[/]")
+        console.print("[bold cyan]RAW MODEL OUTPUT (with tokens):[/]")
         console.print("[bold cyan]" + "="*80 + "[/]")
-        console.print(f"[green]{out}[/]")
+        console.print(f"[dim]{out_with_tokens[:500]}...[/]")  # Show first 500 chars
+        console.print("[bold cyan]" + "="*80 + "[/]\n")
+        
+        console.print("\n[bold cyan]" + "="*80 + "[/]")
+        console.print("[bold cyan]RAW MODEL OUTPUT (clean):[/]")
+        console.print("[bold cyan]" + "="*80 + "[/]")
+        console.print(f"[green]{out[:500]}...[/]")  # Show first 500 chars
         console.print("[bold cyan]" + "="*80 + "[/]\n")
         
         # Extract the assistant's response
-        # For Qwen format: look for the assistant's response after <|im_start|>assistant
-        if "<|im_start|>assistant" in out:
+        # For Qwen format: look for the assistant's response after special tokens
+        if "<|im_start|>assistant" in out_with_tokens:
+            console.print("[cyan]→ Found Qwen assistant marker in output[/]")
             # Split by the assistant marker and take everything after it
-            parts = out.split("<|im_start|>assistant")
+            parts = out_with_tokens.split("<|im_start|>assistant")
             if len(parts) > 1:
                 response = parts[-1].strip()
                 # Remove the end token if present
                 response = response.replace("<|im_end|>", "").strip()
-                console.print(f"[blue]→ Extracted assistant response (length: {len(response)} chars)[/]")
+                console.print(f"[green]✓ Extracted assistant response using tokens (length: {len(response)} chars)[/]")
                 return response
         
-        # Fallback: try to strip the prompt
+        # Try to find where the actual response starts by looking for common patterns
+        # The prompt ends and response begins, usually after "Provide your analysis in JSON format."
+        if "Provide your analysis in JSON format." in out:
+            console.print("[cyan]→ Found prompt end marker[/]")
+            parts = out.split("Provide your analysis in JSON format.")
+            if len(parts) > 1:
+                response = parts[-1].strip()
+                console.print(f"[green]✓ Extracted response after prompt (length: {len(response)} chars)[/]")
+                return response
+        
+        # Try to strip the prompt if it's in the output
         if prompt in out:
             response = out[len(prompt):].strip()
             console.print(f"[blue]→ Stripped prompt from output (length: {len(response)} chars)[/]")
             return response
         
+        # If output starts with "assistant" or similar, remove it
+        for prefix in ["assistant\n", "assistant ", "Assistant\n", "Assistant "]:
+            if out.startswith(prefix):
+                response = out[len(prefix):].strip()
+                console.print(f"[blue]→ Removed '{prefix}' prefix (length: {len(response)} chars)[/]")
+                return response
+        
         # Last resort: return as-is
-        console.print(f"[yellow]⚠ Using raw output as-is[/]")
+        console.print(f"[yellow]⚠ Using raw output as-is (length: {len(out)} chars)[/]")
         return out.strip()
 
     def _format_chat(self, messages: List[Dict[str, str]]) -> str:
