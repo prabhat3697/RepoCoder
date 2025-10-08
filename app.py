@@ -80,7 +80,8 @@ def create_models_config(models: List[str], device: str, max_model_len: int) -> 
 
 
 def create_app(repo_root: str, models: List[str], device: str = "cpu", 
-               max_model_len: int = 4096, embed_model: str = "sentence-transformers/all-MiniLM-L6-v2"):
+               max_model_len: int = 4096, embed_model: str = "sentence-transformers/all-MiniLM-L6-v2",
+               use_llm_routing: bool = False, routing_model: str = None):
     """Create the RepoCoder FastAPI application"""
     
     console.print("[bold cyan]═══ RepoCoder Starting ═══[/]")
@@ -100,6 +101,14 @@ def create_app(repo_root: str, models: List[str], device: str = "cpu",
     llm_executor = LocalCoder(model_name=models[0], device=device, max_model_len=max_model_len)
     console.print("[green]✓ LLM loaded[/]")
     
+    # Optionally load small LLM for routing
+    routing_llm = None
+    if use_llm_routing:
+        routing_model_name = routing_model or "microsoft/DialoGPT-small"
+        console.print(f"[blue]Loading routing LLM:[/] {routing_model_name}")
+        routing_llm = LocalCoder(model_name=routing_model_name, device=device, max_model_len=1024)
+        console.print("[green]✓ Routing LLM loaded[/]")
+    
     # Create model configs
     model_configs = create_models_config(models, device, max_model_len)
     
@@ -110,7 +119,9 @@ def create_app(repo_root: str, models: List[str], device: str = "cpu",
         ignore_dirs=IGNORE_DIRS,
         models=model_configs,
         embedder=embedder,
-        llm_executor=llm_executor
+        llm_executor=llm_executor,
+        routing_llm=routing_llm,
+        use_llm_routing=use_llm_routing
     )
     
     # Build the index
@@ -183,6 +194,12 @@ def parse_args():
                    default="sentence-transformers/all-MiniLM-L6-v2",
                    help="Embedding model for vector search")
     
+    # Intelligent Routing
+    p.add_argument("--use-llm-routing", action="store_true",
+                   help="Use small LLM for intelligent query routing (slower but smarter)")
+    p.add_argument("--routing-model", default="microsoft/DialoGPT-small",
+                   help="Small model to use for query routing")
+    
     # Hardware
     p.add_argument("--device", default="cpu", 
                    help="Device to use (cpu/cuda/auto)")
@@ -207,7 +224,9 @@ if __name__ == "__main__":
         models=args.models,
         device=args.device,
         max_model_len=args.max_model_len,
-        embed_model=args.embed_model
+        embed_model=args.embed_model,
+        use_llm_routing=args.use_llm_routing,
+        routing_model=args.routing_model
     )
     
     import uvicorn

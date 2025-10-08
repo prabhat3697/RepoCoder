@@ -12,6 +12,8 @@ from .query_analyzer import QueryAnalyzer
 from .context_retriever import ContextRetriever
 from .model_selector import ModelSelector
 from .response_generator import ResponseGenerator
+from .query_router import QueryRouter
+from .llm_router import LLMQueryRouter
 
 console = Console()
 
@@ -27,15 +29,26 @@ class RepoCoderPipeline:
     """
     
     def __init__(self, repo_root: str, code_extensions: set, ignore_dirs: set,
-                 models: Dict[str, ModelConfig], embedder=None, llm_executor=None):
+                 models: Dict[str, ModelConfig], embedder=None, llm_executor=None, 
+                 routing_llm=None, use_llm_routing: bool = False):
         
-        console.print("[bold cyan]Initializing RepoCoder V2 Pipeline...[/]")
+        console.print("[bold cyan]Initializing RepoCoder Pipeline...[/]")
         
         self.repo_root = repo_root
+        self.use_llm_routing = use_llm_routing
         
         # Initialize components
         self.indexer = CoreIndexer(repo_root, code_extensions, ignore_dirs)
         self.query_analyzer = QueryAnalyzer(use_llm=False)
+        
+        # Choose router based on configuration
+        if use_llm_routing and routing_llm:
+            console.print("[cyan]→ Using LLM-based query routing (intelligent)[/]")
+            self.query_router = LLMQueryRouter(self.indexer, small_llm=routing_llm)
+        else:
+            console.print("[cyan]→ Using pattern-based query routing (fast)[/]")
+            self.query_router = QueryRouter(self.indexer, use_llm=False)
+        
         self.context_retriever = ContextRetriever(self.indexer, embedder)
         self.model_selector = ModelSelector(models)
         self.response_generator = ResponseGenerator(llm_executor)
@@ -84,6 +97,64 @@ class RepoCoderPipeline:
         console.print("[bold yellow]" + "="*80 + "[/]")
         query_analysis = self.query_analyzer.analyze(query_text)
         self._print_query_analysis(query_analysis)
+        
+        # Step 1.5: Route Query (decide what data to use)
+        console.print("\n[bold yellow]" + "="*80 + "[/]")
+        console.print("[bold yellow]STEP 1.5: QUERY ROUTING[/]")
+        console.print("[bold yellow]" + "="*80 + "[/]")
+        routing_decision = self.query_router.route(query_analysis)
+        console.print(f"  Strategy: [cyan]{routing_decision['strategy']}[/]")
+        console.print(f"  Needs Code: [cyan]{routing_decision['needs_code']}[/]")
+        console.print(f"  Needs Metadata: [cyan]{routing_decision['needs_metadata']}[/]")
+        console.print(f"  Direct Answer: [cyan]{routing_decision['can_compute_directly']}[/]")
+        console.print(f"  Reasoning: [dim]{routing_decision['reasoning']}[/]")
+        
+        # If we can answer directly without LLM, do it!
+        if routing_decision['can_compute_directly']:
+            console.print("[green]✓ Answering directly from metadata (no LLM needed)[/]")
+            direct_answer = self.query_router.answer_metadata_query(query_analysis)
+            
+            # Build response
+            response = Response(
+                analysis=direct_answer['analysis'],
+                plan=direct_answer['plan'],
+                changes=direct_answer['changes'],
+                model_used="DirectComputation",
+                took_ms=int((time.time() - t0) * 1000),
+                confidence=1.0,
+                metadata=direct_answer.get('metadata', {})
+            )
+            
+            # Build result
+            result = {
+                "model": "DirectComputation",
+                "took_ms": response.took_ms,
+                "retrieved": 0,
+                "result": {
+                    "analysis": response.analysis,
+                    "plan": response.plan,
+                    "changes": response.changes,
+                    "confidence": response.confidence,
+                    "metadata": response.metadata
+                },
+                "query_analysis": {
+                    "intent": query_analysis.intent.value,
+                    "complexity": query_analysis.complexity.value,
+                    "file_references": [
+                        {"filename": ref.filename, "confidence": ref.confidence}
+                        for ref in query_analysis.file_references
+                    ],
+                    "entities": query_analysis.entities
+                },
+                "retrieval": {
+                    "strategy": "metadata_direct",
+                    "files_involved": 0,
+                    "total_chunks": 0
+                },
+                "routing": routing_decision
+            }
+            
+            return result
         
         # Step 2: Retrieve Context
         console.print("\n[bold yellow]" + "="*80 + "[/]")
@@ -147,7 +218,8 @@ class RepoCoderPipeline:
                 "strategy": context.strategy_used,
                 "files_involved": len(context.file_tree),
                 "total_chunks": context.total_chunks
-            }
+            },
+            "routing": routing_decision  # Add routing decision to response
         }
         
         return result
