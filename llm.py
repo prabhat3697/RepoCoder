@@ -154,11 +154,28 @@ class LocalCoder:
         console.print("[bold cyan]" + "="*80 + "[/]")
         console.print(f"[green]{out}[/]")
         console.print("[bold cyan]" + "="*80 + "[/]\n")
-        # Heuristic to strip the prompt
+        
+        # Extract the assistant's response
+        # For Qwen format: look for the assistant's response after <|im_start|>assistant
+        if "<|im_start|>assistant" in out:
+            # Split by the assistant marker and take everything after it
+            parts = out.split("<|im_start|>assistant")
+            if len(parts) > 1:
+                response = parts[-1].strip()
+                # Remove the end token if present
+                response = response.replace("<|im_end|>", "").strip()
+                console.print(f"[blue]→ Extracted assistant response (length: {len(response)} chars)[/]")
+                return response
+        
+        # Fallback: try to strip the prompt
         if prompt in out:
-            return out[len(prompt):].strip()
-        else:
-            return out.strip()
+            response = out[len(prompt):].strip()
+            console.print(f"[blue]→ Stripped prompt from output (length: {len(response)} chars)[/]")
+            return response
+        
+        # Last resort: return as-is
+        console.print(f"[yellow]⚠ Using raw output as-is[/]")
+        return out.strip()
 
     def _format_chat(self, messages: List[Dict[str, str]]) -> str:
         # DeepSeek/ChatML-ish format
