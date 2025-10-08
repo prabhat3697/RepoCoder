@@ -51,8 +51,9 @@ from indexer import RepoIndexer
 from persistent_indexer import PersistentRepoIndexer
 from llm import LocalCoder
 from query_router import QueryRouter, create_default_model_configs
-from prompts import SYSTEM_TEMPLATE, USER_TEMPLATE, PLANNER_SYSTEM, PLANNER_USER, JUDGE_SYSTEM, JUDGE_USER, SIMPLE_SYSTEM_TEMPLATE, SIMPLE_USER_TEMPLATE
+from prompts import SYSTEM_TEMPLATE, USER_TEMPLATE, PLANNER_SYSTEM, PLANNER_USER, JUDGE_SYSTEM, JUDGE_USER, SIMPLE_SYSTEM_TEMPLATE, SIMPLE_USER_TEMPLATE, FILE_ANALYSIS_TEMPLATE
 from utils import make_context, apply_unified_diff
+from file_detector import CursorStyleFileDetector
 
 
 def parse_simple_response(text: str) -> dict:
@@ -179,6 +180,9 @@ def create_app(
     # Set up query router
     router = QueryRouter(model_configs) if enable_routing else None
     
+    # Set up Cursor-style file detector
+    file_detector = CursorStyleFileDetector(repo_root)
+    
     # Set primary model
     if primary_model and primary_model in loaded_models:
         coder = loaded_models[primary_model]
@@ -244,6 +248,15 @@ def create_app(
     def query(req: QueryRequest):
         t0 = time.time()
         
+        # Cursor-style file detection
+        query_analysis = file_detector.detect_files_in_query(req.prompt)
+        console.print(f"[blue]Query Analysis:[/] {query_analysis.query_type}")
+        
+        if query_analysis.has_file_references:
+            console.print(f"[green]Detected {len(query_analysis.file_references)} file reference(s):[/]")
+            for ref in query_analysis.file_references:
+                console.print(f"  📄 {ref.filename} (confidence: {ref.confidence:.2f})")
+        
         # Intelligent query routing
         if router and len(loaded_models) > 1:
             selected_model_name, intent = router.route_query(req.prompt, list(loaded_models.keys()))
@@ -254,17 +267,36 @@ def create_app(
             selected_model_name = coder.model_name
             intent = None
         
-        # Retrieve relevant chunks
-        chunks = indexer.retrieve(req.prompt, top_k=req.top_k)
-        context = make_context(chunks, indexer.repo_root)
+        # Cursor-style retrieval based on file references
+        if query_analysis.has_file_references:
+            # Retrieve chunks from specific files
+            chunks = []
+            for file_ref in query_analysis.file_references:
+                file_chunks = indexer.retrieve_by_file(file_ref.filename, top_k=req.top_k)
+                chunks.extend(file_chunks)
+            
+            # If no file-specific chunks found, fall back to semantic search
+            if not chunks:
+                console.print("[yellow]No file-specific chunks found, using semantic search[/]")
+                chunks = indexer.retrieve(req.prompt, top_k=req.top_k)
+        else:
+            # Regular semantic retrieval
+            chunks = indexer.retrieve(req.prompt, top_k=req.top_k)
         
-        # Use simplified prompts for small models
+        # Enhanced context building with file references
+        context = make_context(chunks, indexer.repo_root, query_analysis.file_references)
+        
+        # Use appropriate prompts based on model size and query type
         if selected_model.max_model_len <= 1024:
             system = SIMPLE_SYSTEM_TEMPLATE
             user = SIMPLE_USER_TEMPLATE.format(task=req.prompt, context=context[:2000])  # Limit context
         else:
             system = SYSTEM_TEMPLATE
-            user = USER_TEMPLATE.format(task=req.prompt, k=req.top_k, context=context)
+            # Use file-specific template for file analysis queries
+            if query_analysis.query_type == "file_analysis":
+                user = FILE_ANALYSIS_TEMPLATE.format(task=req.prompt, context=context)
+            else:
+                user = USER_TEMPLATE.format(task=req.prompt, k=req.top_k, context=context)
         
         # Ensure max_new_tokens doesn't exceed model capacity
         safe_max_tokens = min(req.max_new_tokens, selected_model.max_model_len // 2)
@@ -280,7 +312,7 @@ def create_app(
             else:
                 parsed = {"analysis": out, "plan": "", "changes": []}
         
-        # Add routing information to response
+        # Add routing and file detection information to response
         if intent:
             parsed["routing"] = {
                 "selected_model": selected_model_name,
@@ -289,6 +321,18 @@ def create_app(
                 "confidence": intent.confidence,
                 "reasoning": intent.reasoning
             }
+        
+        # Add file detection information (Cursor-style)
+        if query_analysis.has_file_references:
+            parsed["file_references"] = [
+                {
+                    "filename": ref.filename,
+                    "confidence": ref.confidence,
+                    "context": ref.context,
+                    "line_number": ref.line_number
+                }
+                for ref in query_analysis.file_references
+            ]
         
         took_ms = int((time.time() - t0) * 1000)
         return QueryResponse(model=selected_model_name, took_ms=took_ms, retrieved=len(chunks), result=parsed)

@@ -93,7 +93,12 @@ class RepoIndexer:
         console.print("[green]Fallback index built (no FAISS/ShibuDB).[/]")
 
     def _prep_embed_text(self, c: Chunk) -> str:
-        header = f"PATH: {os.path.relpath(c.path, self.repo_root)}\nSPAN: {c.start}-{c.end}\n---\n"
+        filename = os.path.basename(c.path)
+        file_ext = os.path.splitext(filename)[1]
+        rel_path = os.path.relpath(c.path, self.repo_root)
+        
+        # Cursor-style embedding: Give filename and path maximum prominence
+        header = f"FILE: {filename}\nFILENAME: {filename}\nEXTENSION: {file_ext}\nPATH: {rel_path}\nFILE_PATH: {rel_path}\nFUNCTION: {filename}\nSPAN: {c.start}-{c.end}\n---\n"
         return header + c.text
 
     def retrieve(self, query: str, top_k: int = 12) -> List[Chunk]:
@@ -116,3 +121,74 @@ class RepoIndexer:
         
         # Return chunks
         return [self.chunks[idx] for idx in top_indices]
+    
+    def retrieve_by_file(self, filename: str, top_k: int = 12) -> List[Chunk]:
+        """Cursor-style: Retrieve chunks from a specific file."""
+        if not self.chunks:
+            raise RuntimeError("Index is empty. Build it first.")
+        
+        # Find all chunks from the target file
+        file_chunks = []
+        filename_lower = filename.lower()
+        
+        for chunk in self.chunks:
+            chunk_filename = os.path.basename(chunk.path).lower()
+            chunk_path_lower = chunk.path.lower()
+            
+            # Exact filename match
+            if chunk_filename == filename_lower:
+                file_chunks.append(chunk)
+            # Path contains filename
+            elif filename_lower in chunk_path_lower:
+                file_chunks.append(chunk)
+        
+        # If we found chunks from the file, return them (up to top_k)
+        if file_chunks:
+            return file_chunks[:top_k]
+        
+        # Fallback: use semantic search with filename boosting
+        return self.retrieve_with_filename_boost(filename, top_k)
+    
+    def retrieve_with_filename_boost(self, query: str, top_k: int = 12) -> List[Chunk]:
+        """Retrieve with filename boosting (Cursor-style)."""
+        if not self.embeddings:
+            raise RuntimeError("Index is empty. Build it first.")
+        
+        # Encode query
+        q_emb = self.embedder.encode([query], normalize_embeddings=True)[0]
+        
+        similarities = []
+        for i, emb in enumerate(self.embeddings):
+            similarity = np.dot(q_emb, emb)
+            
+            # Cursor-style filename boosting
+            chunk = self.chunks[i]
+            filename = os.path.basename(chunk.path)
+            chunk_path_lower = chunk.path.lower()
+            query_lower = query.lower()
+            
+            # Strong boost for exact filename match
+            if filename.lower() == query_lower:
+                similarity *= 5.0
+            # Medium boost for filename contains query
+            elif query_lower in filename.lower():
+                similarity *= 3.0
+            # Light boost for path contains query
+            elif query_lower in chunk_path_lower:
+                similarity *= 2.0
+            
+            similarities.append((similarity, i))
+        
+        similarities.sort(reverse=True)
+        top_indices = [idx for _, idx in similarities[:top_k]]
+        return [self.chunks[idx] for idx in top_indices]
+    
+    def retrieve_multiple_files(self, filenames: List[str], top_k_per_file: int = 6) -> List[Chunk]:
+        """Retrieve chunks from multiple specific files."""
+        all_chunks = []
+        
+        for filename in filenames:
+            file_chunks = self.retrieve_by_file(filename, top_k_per_file)
+            all_chunks.extend(file_chunks)
+        
+        return all_chunks

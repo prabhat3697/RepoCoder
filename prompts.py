@@ -12,8 +12,9 @@ PATCH_SCHEMA_HINT = (
 )
 
 SYSTEM_TEMPLATE = (
-    "You are RepoCoder, a senior software engineer. You work on a private codebase.\n"
+    "You are RepoCoder, a senior software engineer working on a private codebase.\n"
     "You will be given a user task and a set of retrieved code chunks from the repo.\n"
+    "When analyzing specific files, focus on understanding their purpose, structure, and functionality.\n"
     "Propose a minimal, robust change-set with focused diffs and a short plan.\n"
     "Follow the repo's existing style. Prefer small surgical patches and unit tests.\n"
     f"{PATCH_SCHEMA_HINT}"
@@ -44,6 +45,21 @@ USER_TEMPLATE = (
     "- Keep external behavior compatible unless asked.\n"
     "- Explain risky changes.\n"
     "- Include test changes when appropriate.\n\n"
+    "Now produce the JSON response."
+)
+
+# File-specific analysis template (Cursor-style)
+FILE_ANALYSIS_TEMPLATE = (
+    "Task:\n"
+    "{task}\n\n"
+    "File Context:\n"
+    "{context}\n\n"
+    "Analyze the file(s) mentioned in the task. Provide:\n"
+    "- Purpose and functionality of the file\n"
+    "- Key components, functions, and classes\n"
+    "- How it fits into the overall system\n"
+    "- Any dependencies or relationships\n\n"
+    "If the task asks for changes, propose them. Otherwise, focus on explanation.\n\n"
     "Now produce the JSON response."
 )
 

@@ -552,6 +552,95 @@ class PersistentRepoIndexer:
             traceback.print_exc()
             return []
     
+    def retrieve_by_file(self, filename: str, top_k: int = 12) -> List[Chunk]:
+        """Cursor-style: Retrieve chunks from a specific file."""
+        if not self.client:
+            console.print("[yellow]ShibuDB not connected, falling back to in-memory search[/]")
+            return self._retrieve_by_file_fallback(filename, top_k)
+        
+        try:
+            meta_space_name = f"{self.space_name}_meta"
+            vector_space_name = f"{self.space_name}_vectors"
+            
+            # First, try to find chunks by filename in metadata
+            filename_lower = filename.lower()
+            file_chunks = []
+            
+            # Get all file paths and check for matches
+            file_list_response = self.client.get("file_metadata_list", space=meta_space_name)
+            if file_list_response.get("status") == "OK" and "value" in file_list_response:
+                file_paths = file_list_response["value"].strip().split('\n') if file_list_response["value"].strip() else []
+                
+                matching_files = []
+                for file_path in file_paths:
+                    if (filename_lower in file_path.lower() or 
+                        os.path.basename(file_path).lower() == filename_lower):
+                        matching_files.append(file_path)
+                
+                if matching_files:
+                    console.print(f"[blue]Found {len(matching_files)} matching files for '{filename}'[/]")
+                    
+                    # For each matching file, get its chunks
+                    for file_path in matching_files:
+                        safe_path = file_path.replace('/', '_').replace('\\', '_')
+                        file_meta_key = f"file_meta_{safe_path}"
+                        file_meta_response = self.client.get(file_meta_key, space=meta_space_name)
+                        
+                        if file_meta_response.get("status") == "OK" and "value" in file_meta_response:
+                            meta_str = file_meta_response["value"]
+                            parts = meta_str.split('|')
+                            if len(parts) >= 6:
+                                chunk_count = int(parts[5])
+                                
+                                # Get chunks for this file
+                                for i in range(chunk_count):
+                                    chunk_key = f"chunk_{safe_path}_{i}"
+                                    chunk_response = self.client.get(chunk_key, space=meta_space_name)
+                                    
+                                    if chunk_response.get("status") == "OK" and "value" in chunk_response:
+                                        chunk_meta = json.loads(chunk_response["value"])
+                                        chunk = Chunk(
+                                            path=chunk_meta["path"],
+                                            start=chunk_meta["start"],
+                                            end=chunk_meta["end"],
+                                            text=chunk_meta["text"]
+                                        )
+                                        file_chunks.append(chunk)
+            
+            if file_chunks:
+                console.print(f"[green]Found {len(file_chunks)} chunks for file '{filename}'[/]")
+                return file_chunks[:top_k]
+            else:
+                console.print(f"[yellow]No chunks found for file '{filename}', using semantic search with filename boost[/]")
+                return self.retrieve_with_filename_boost(filename, top_k)
+                
+        except Exception as e:
+            console.print(f"[red]Error retrieving file-specific chunks: {e}[/]")
+            return self._retrieve_by_file_fallback(filename, top_k)
+    
+    def _retrieve_by_file_fallback(self, filename: str, top_k: int = 12) -> List[Chunk]:
+        """Fallback file retrieval when ShibuDB is not available."""
+        # This would require loading all chunks into memory, which defeats the purpose
+        # For now, return empty list and let the caller handle it
+        console.print("[yellow]File-specific retrieval not available without ShibuDB[/]")
+        return []
+    
+    def retrieve_with_filename_boost(self, query: str, top_k: int = 12) -> List[Chunk]:
+        """Retrieve with filename boosting (Cursor-style)."""
+        # Use the regular retrieve method but with enhanced query
+        enhanced_query = f"FILE: {query} FILENAME: {query} {query}"
+        return self.retrieve(enhanced_query, top_k)
+    
+    def retrieve_multiple_files(self, filenames: List[str], top_k_per_file: int = 6) -> List[Chunk]:
+        """Retrieve chunks from multiple specific files."""
+        all_chunks = []
+        
+        for filename in filenames:
+            file_chunks = self.retrieve_by_file(filename, top_k_per_file)
+            all_chunks.extend(file_chunks)
+        
+        return all_chunks
+    
     def get_stats(self) -> Dict[str, any]:
         """Get indexing statistics."""
         return {

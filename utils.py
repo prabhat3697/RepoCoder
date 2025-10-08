@@ -11,17 +11,62 @@ from typing import List
 from indexer import Chunk
 
 
-def make_context(chunks: List[Chunk], repo_root: str) -> str:
-    """Create a formatted context string from retrieved chunks."""
+def make_context(chunks: List[Chunk], repo_root: str, file_references: List = None) -> str:
+    """Create a Cursor-style formatted context string from retrieved chunks."""
     lines = []
-    for i, c in enumerate(chunks, 1):
-        rel = os.path.relpath(c.path, repo_root)
-        header = f"--- CHUNK {i} | {rel} | span {c.start}-{c.end} ---"
-        body = c.text
-        if len(body) > 1600:
-            body = body[:1600] + "\n...<truncated>..."
-        lines.append(header + "\n" + body)
-    return "\n\n".join(lines)
+    
+    # Group chunks by file for better organization
+    file_groups = {}
+    for chunk in chunks:
+        file_path = chunk.path
+        if file_path not in file_groups:
+            file_groups[file_path] = []
+        file_groups[file_path].append(chunk)
+    
+    # Sort files to prioritize referenced files
+    sorted_files = sorted(file_groups.keys())
+    if file_references:
+        # Put referenced files first
+        referenced_files = [ref.full_path for ref in file_references if ref.full_path in file_groups]
+        for ref_file in referenced_files:
+            if ref_file in sorted_files:
+                sorted_files.remove(ref_file)
+                sorted_files.insert(0, ref_file)
+    
+    chunk_num = 1
+    for file_path in sorted_files:
+        file_chunks = file_groups[file_path]
+        rel_path = os.path.relpath(file_path, repo_root)
+        filename = os.path.basename(file_path)
+        
+        # File header (Cursor-style)
+        lines.append(f"📁 {filename}")
+        lines.append(f"📂 {rel_path}")
+        lines.append("─" * 80)
+        
+        for chunk in file_chunks:
+            # Chunk header
+            header = f"📍 Lines {chunk.start}-{chunk.end}"
+            body = chunk.text
+            
+            # Clean up the text (remove our embedding headers)
+            if "FILE:" in body and "---" in body:
+                # Remove the embedding header we added
+                parts = body.split("---\n", 1)
+                if len(parts) > 1:
+                    body = parts[1]
+            
+            # Truncate if too long
+            if len(body) > 1600:
+                body = body[:1600] + "\n...<truncated>..."
+            
+            lines.append(header)
+            lines.append(body)
+            lines.append("")  # Empty line between chunks
+        
+        lines.append("")  # Empty line between files
+    
+    return "\n".join(lines)
 
 
 def apply_unified_diff(repo_root: str, diff_text: str) -> List[str]:
