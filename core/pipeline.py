@@ -89,12 +89,17 @@ class RepoCoderPipeline:
         console.print("\n[bold yellow]" + "="*80 + "[/]")
         console.print("[bold yellow]STEP 2: CONTEXT RETRIEVAL[/]")
         console.print("[bold yellow]" + "="*80 + "[/]")
+        
         if query_analysis.file_references:
-            # Use hybrid retrieval for file-specific queries
-            context = self.context_retriever.retrieve_hybrid(query_analysis, top_k)
-        else:
-            # Use standard retrieval
+            # When user explicitly mentions files, ONLY retrieve from those files
+            # Don't pollute with other files from semantic search
+            console.print(f"[cyan]User mentioned specific file(s), using STRICT file-only retrieval[/]")
             context = self.context_retriever.retrieve(query_analysis, top_k)
+        else:
+            # No files mentioned, use semantic search
+            console.print(f"[cyan]No files mentioned, using semantic retrieval[/]")
+            context = self.context_retriever.retrieve(query_analysis, top_k)
+        
         self._print_retrieval_context(context)
         
         # Step 3: Select Model

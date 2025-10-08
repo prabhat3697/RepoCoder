@@ -91,22 +91,29 @@ class ContextRetriever:
         return context
     
     def _retrieve_by_files(self, file_refs: List, top_k: int) -> List[CodeChunk]:
-        """Retrieve chunks from specific files"""
+        """Retrieve chunks from specific files ONLY (no other files)"""
         chunks = []
+        
+        console.print(f"[cyan]→ File-specific retrieval (STRICT MODE - only target files)[/]")
         
         for file_ref in file_refs:
             # Find the file
             file_node = self.indexer.get_file_by_name(file_ref.filename)
             if not file_node:
-                console.print(f"[yellow]File not found: {file_ref.filename}[/]")
+                console.print(f"[yellow]⚠ File not found: {file_ref.filename}[/]")
                 continue
             
-            # Get chunks from this file
+            # Get ALL chunks from this file
             file_chunks = self.indexer.get_chunks_by_file(file_node.path)
+            console.print(f"[green]✓ Found {len(file_chunks)} chunks from {file_ref.filename}[/]")
             chunks.extend(file_chunks)
         
-        # Limit to top_k
-        return chunks[:top_k]
+        if chunks:
+            console.print(f"[green]✓ Retrieved {len(chunks)} chunks from {len(file_refs)} file(s) ONLY[/]")
+        
+        # Return ALL chunks from target files (not limited to top_k for file-specific queries)
+        # User asked about THIS file, give them the WHOLE file
+        return chunks
     
     def _retrieve_semantic(self, query: str, top_k: int) -> List[CodeChunk]:
         """Retrieve chunks using semantic similarity"""
