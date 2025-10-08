@@ -64,8 +64,20 @@ class LocalCoder:
         # Debug information
         console.print(f"[blue]Debug:[/] max_model_len={self.max_model_len}, max_new_tokens={max_new_tokens}, max_input_length={max_input_length}")
         
+        # Qwen-specific format
+        if "qwen" in self.model_name.lower():
+            messages = [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ]
+            # Use Qwen's chat template if available
+            if hasattr(self.tokenizer, 'apply_chat_template'):
+                prompt = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+            else:
+                # Fallback Qwen format
+                prompt = f"<|im_start|>system\n{system}<|im_end|>\n<|im_start|>user\n{user}<|im_end|>\n<|im_start|>assistant\n"
         # Simple prompt format for small models
-        if "dialogpt" in self.model_name.lower() or "gpt2" in self.model_name.lower():
+        elif "dialogpt" in self.model_name.lower() or "gpt2" in self.model_name.lower():
             # Use simple format for GPT-2 based models
             prompt = f"{system}\n\nUser: {user}\nAssistant:"
         else:
