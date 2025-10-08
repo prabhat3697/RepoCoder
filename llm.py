@@ -66,16 +66,20 @@ class LocalCoder:
         
         # Qwen-specific format
         if "qwen" in self.model_name.lower():
+            console.print("[cyan]→ Detected Qwen model, using Qwen-specific format[/]")
             messages = [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ]
             # Use Qwen's chat template if available
-            if hasattr(self.tokenizer, 'apply_chat_template'):
+            try:
                 prompt = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-            else:
-                # Fallback Qwen format
-                prompt = f"<|im_start|>system\n{system}<|im_end|>\n<|im_start|>user\n{user}<|im_end|>\n<|im_start|>assistant\n"
+                console.print("[green]✓ Using Qwen tokenizer chat template[/]")
+            except Exception as e:
+                # Fallback: Simple instruct format for Qwen
+                console.print(f"[yellow]⚠ Chat template not available, using simple format: {e}[/]")
+                # Qwen 2.5 Coder prefers this simpler format
+                prompt = f"You are a helpful coding assistant.\n\n### Instruction:\n{user}\n\n### Response:\n"
         # Simple prompt format for small models
         elif "dialogpt" in self.model_name.lower() or "gpt2" in self.model_name.lower():
             # Use simple format for GPT-2 based models
@@ -103,9 +107,17 @@ class LocalCoder:
         if len(prompt) > max_input_length * 4:  # Rough estimate: 4 chars per token
             prompt = prompt[:max_input_length * 4]
         
+        # Print the final prompt being sent to the model
+        console.print("\n[bold cyan]" + "="*80 + "[/]")
+        console.print("[bold cyan]FINAL PROMPT BEING SENT TO MODEL:[/]")
+        console.print("[bold cyan]" + "="*80 + "[/]")
+        console.print(f"[yellow]{prompt}[/]")
+        console.print("[bold cyan]" + "="*80 + "[/]\n")
+        
         # Use a safe max_length for tokenization
         safe_max_length = min(max_input_length, 512)  # Cap at 512 to be safe
         
+        console.print(f"[blue]→ Tokenizing with max_length={safe_max_length}[/]")
         inputs = self.tokenizer(prompt, return_tensors="pt", truncation=True, max_length=safe_max_length)
         
         # Move to device
@@ -113,6 +125,8 @@ class LocalCoder:
             inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
         else:
             inputs = {k: v.to(self.device) for k, v in inputs.items()}
+        
+        console.print(f"[blue]→ Generating with max_new_tokens={min(max_new_tokens, 256)}, temperature={temperature}[/]")
         
         with torch.no_grad():
             try:
@@ -126,12 +140,20 @@ class LocalCoder:
                     eos_token_id=self.tokenizer.eos_token_id,
                     repetition_penalty=1.1,  # Reduce repetition
                 )
+                console.print("[green]✓ Generation complete[/]")
             except Exception as e:
-                console.print(f"[red]Generation error:[/] {e}")
+                console.print(f"[red]✗ Generation error:[/] {e}")
                 # Return a simple fallback response
                 return "I apologize, but I encountered an error while generating a response. Please try with a shorter prompt or different parameters."
         
+        console.print(f"[blue]→ Decoding output (length: {len(outputs[0])} tokens)[/]")
         out = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+        
+        console.print("\n[bold cyan]" + "="*80 + "[/]")
+        console.print("[bold cyan]RAW MODEL OUTPUT:[/]")
+        console.print("[bold cyan]" + "="*80 + "[/]")
+        console.print(f"[green]{out}[/]")
+        console.print("[bold cyan]" + "="*80 + "[/]\n")
         # Heuristic to strip the prompt
         if prompt in out:
             return out[len(prompt):].strip()

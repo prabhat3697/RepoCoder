@@ -79,12 +79,16 @@ class RepoCoderPipeline:
         t0 = time.time()
         
         # Step 1: Analyze Query
-        console.print("\n[yellow]→ Step 1: Query Analysis[/]")
+        console.print("\n[bold yellow]" + "="*80 + "[/]")
+        console.print("[bold yellow]STEP 1: QUERY ANALYSIS[/]")
+        console.print("[bold yellow]" + "="*80 + "[/]")
         query_analysis = self.query_analyzer.analyze(query_text)
         self._print_query_analysis(query_analysis)
         
         # Step 2: Retrieve Context
-        console.print("\n[yellow]→ Step 2: Context Retrieval[/]")
+        console.print("\n[bold yellow]" + "="*80 + "[/]")
+        console.print("[bold yellow]STEP 2: CONTEXT RETRIEVAL[/]")
+        console.print("[bold yellow]" + "="*80 + "[/]")
         if query_analysis.file_references:
             # Use hybrid retrieval for file-specific queries
             context = self.context_retriever.retrieve_hybrid(query_analysis, top_k)
@@ -94,11 +98,15 @@ class RepoCoderPipeline:
         self._print_retrieval_context(context)
         
         # Step 3: Select Model
-        console.print("\n[yellow]→ Step 3: Model Selection[/]")
+        console.print("\n[bold yellow]" + "="*80 + "[/]")
+        console.print("[bold yellow]STEP 3: MODEL SELECTION[/]")
+        console.print("[bold yellow]" + "="*80 + "[/]")
         model_config = self.model_selector.select_model(query_analysis)
         
         # Step 4: Generate Response
-        console.print("\n[yellow]→ Step 4: Response Generation[/]")
+        console.print("\n[bold yellow]" + "="*80 + "[/]")
+        console.print("[bold yellow]STEP 4: RESPONSE GENERATION[/]")
+        console.print("[bold yellow]" + "="*80 + "[/]")
         response = self.response_generator.generate(
             query_analysis, context, model_config, self.repo_root
         )
