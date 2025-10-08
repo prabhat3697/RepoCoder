@@ -26,16 +26,15 @@ class LLMQueryRouter:
         self.indexer = indexer
         self.small_llm = small_llm
         
-        # Simple routing prompt optimized for small models
-        self.routing_prompt = """Route this query to the right strategy.
+        # Ultra-simple routing prompt - just ask for ONE WORD
+        self.routing_prompt = """You are a routing classifier. Return ONLY ONE WORD.
 
-Strategy rules:
-- metadata: counting files, languages, sizes
-- file_specific: query mentions a filename
-- semantic: general code questions
-- structure: project organization
+If query asks about file counts, languages, or project stats → say "metadata"
+If query mentions a specific filename → say "file_specific"
+If query asks about project structure or organization → say "structure"
+Otherwise → say "semantic"
 
-Return JSON only."""
+Return ONLY the category word, nothing else."""
     
     def route(self, query_analysis: QueryAnalysis) -> Dict[str, Any]:
         """Route query using small LLM for intelligent decision"""
@@ -46,15 +45,18 @@ Return JSON only."""
             console.print("[yellow]⚠ No LLM available, using fallback routing[/]")
             return self._fallback_route(query_analysis)
         
-        # Build simple routing query for small LLM
+        # Build ultra-simple query - just need the category
         files_mentioned = [r.filename for r in query_analysis.file_references] if query_analysis.file_references else []
         
-        user_query = f"""Query: "{query_analysis.original_query}"
-Files mentioned: {files_mentioned if files_mentioned else "none"}
-Intent: {query_analysis.intent.value}
+        # Give hints to the model
+        if files_mentioned:
+            file_hint = f" (mentions {', '.join(files_mentioned)})"
+        else:
+            file_hint = ""
+        
+        user_query = f""""{query_analysis.original_query}"{file_hint}
 
-Pick strategy: metadata, file_specific, semantic, or structure.
-JSON format: {{"strategy": "...", "reasoning": "..."}}"""
+Answer with ONE word:"""
         
         try:
             # Use small LLM to make routing decision
@@ -63,15 +65,14 @@ JSON format: {{"strategy": "...", "reasoning": "..."}}"""
             output = self.small_llm.chat(
                 system=self.routing_prompt,
                 user=user_query,
-                max_new_tokens=150,
+                max_new_tokens=10,  # Just need one word!
                 temperature=0.0  # Deterministic routing
             )
             
-            # Parse LLM response
-            decision = self._parse_llm_decision(output)
+            # Parse simple one-word response
+            decision = self._parse_simple_decision(output, query_analysis)
             
             console.print(f"[green]✓ LLM routing decision:[/] {decision['strategy']}")
-            console.print(f"  Confidence: {decision['confidence']:.2f}")
             console.print(f"  Reasoning: {decision['reasoning']}")
             
             return decision
@@ -80,7 +81,73 @@ JSON format: {{"strategy": "...", "reasoning": "..."}}"""
             console.print(f"[yellow]⚠ LLM routing failed: {e}, using fallback[/]")
             return self._fallback_route(query_analysis)
     
-    def _parse_llm_decision(self, output: str) -> Dict[str, Any]:
+    def _parse_simple_decision(self, output: str, query_analysis: QueryAnalysis) -> Dict[str, Any]:
+        """Parse simple one-word LLM decision"""
+        
+        # Clean the output
+        output_clean = output.strip().lower()
+        
+        console.print(f"[cyan]→ LLM output: '{output_clean}'[/]")
+        
+        # Extract the strategy word
+        strategy = None
+        for word in ["metadata", "file_specific", "semantic", "structure"]:
+            if word.replace("_", "") in output_clean.replace("_", "").replace("-", "").replace(" ", ""):
+                strategy = word
+                break
+        
+        if not strategy:
+            # Try to find any of the keywords
+            if "metadata" in output_clean or "meta" in output_clean:
+                strategy = "metadata"
+            elif "file" in output_clean or "specific" in output_clean:
+                strategy = "file_specific"
+            elif "structure" in output_clean or "organization" in output_clean:
+                strategy = "structure"
+            else:
+                strategy = "semantic"
+        
+        console.print(f"[green]✓ Detected strategy: {strategy}[/]")
+        
+        # Build decision based on strategy
+        if strategy == "metadata":
+            return {
+                "strategy": "metadata",
+                "needs_code": False,
+                "needs_metadata": True,
+                "can_compute_directly": True,
+                "confidence": 0.9,
+                "reasoning": "LLM classified as metadata query"
+            }
+        elif strategy == "file_specific":
+            return {
+                "strategy": "file_specific",
+                "needs_code": True,
+                "needs_metadata": False,
+                "can_compute_directly": False,
+                "confidence": 0.9,
+                "reasoning": f"LLM detected file-specific query for: {[r.filename for r in query_analysis.file_references]}"
+            }
+        elif strategy == "structure":
+            return {
+                "strategy": "structure",
+                "needs_code": False,
+                "needs_metadata": True,
+                "can_compute_directly": False,
+                "confidence": 0.8,
+                "reasoning": "LLM classified as structure query"
+            }
+        else:  # semantic
+            return {
+                "strategy": "semantic",
+                "needs_code": True,
+                "needs_metadata": False,
+                "can_compute_directly": False,
+                "confidence": 0.7,
+                "reasoning": "LLM classified as semantic query"
+            }
+    
+    def _parse_llm_decision_old(self, output: str) -> Dict[str, Any]:
         """Parse LLM routing decision"""
         
         # Extract JSON from output
