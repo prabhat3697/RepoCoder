@@ -86,12 +86,239 @@ def get_environment_defaults(environment: str) -> dict:
 
 # Constants
 CODE_EXTS = {
-    ".py", ".pyi", ".ipynb",
-    ".js", ".jsx", ".ts", ".tsx",
-    ".java", ".kt", ".go", ".rs", ".cpp", ".cc", ".c", ".h", ".hpp",
-    ".cs", ".php", ".rb", ".swift", ".m", ".mm",
-    ".sql", ".sh", ".bash", ".zsh", ".ps1", ".yaml", ".yml", ".toml", ".ini",
-    ".md", ".json"
+    # Python
+    ".py", ".pyi", ".pyw", ".pyx", ".pxd", ".pyd", ".ipynb",
+    
+    # JavaScript/TypeScript
+    ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".d.ts",
+    
+    # Web - HTML/CSS/Templates
+    ".html", ".htm", ".xhtml", ".xml", ".svg",
+    ".css", ".scss", ".sass", ".less", ".styl", ".stylus",
+    ".vue", ".svelte", ".astro", ".ejs", ".pug", ".jade", ".hbs", ".handlebars",
+    ".njk", ".nunjucks", ".twig", ".mustache", ".liquid",
+    ".jsp", ".jspx", ".asp", ".aspx", ".cshtml", ".vbhtml", ".razor",
+    
+    # Java/JVM Languages
+    ".java", ".kt", ".kts", ".groovy", ".gradle", ".scala", ".clj", ".cljs", ".cljc",
+    
+    # C/C++
+    ".c", ".cc", ".cpp", ".cxx", ".c++", ".h", ".hh", ".hpp", ".hxx", ".h++",
+    ".cu", ".cuh", ".cuda",
+    
+    # C#/.NET
+    ".cs", ".csx", ".fs", ".fsx", ".fsi", ".vb",
+    
+    # Go
+    ".go", ".mod", ".sum",
+    
+    # Rust
+    ".rs", ".rlib",
+    
+    # Swift/Objective-C
+    ".swift", ".m", ".mm", ".h",
+    
+    # PHP
+    ".php", ".php3", ".php4", ".php5", ".php7", ".phtml",
+    
+    # Ruby
+    ".rb", ".rake", ".gemspec", ".ru", ".erb",
+    
+    # Perl
+    ".pl", ".pm", ".t", ".pod",
+    
+    # Shell Scripts
+    ".sh", ".bash", ".zsh", ".fish", ".ksh", ".csh", ".tcsh",
+    
+    # PowerShell
+    ".ps1", ".psm1", ".psd1",
+    
+    # Batch/CMD
+    ".bat", ".cmd",
+    
+    # R
+    ".r", ".R", ".rmd", ".Rmd",
+    
+    # Lua
+    ".lua",
+    
+    # Dart/Flutter
+    ".dart",
+    
+    # Elixir
+    ".ex", ".exs",
+    
+    # Erlang
+    ".erl", ".hrl",
+    
+    # Haskell
+    ".hs", ".lhs",
+    
+    # OCaml/F#
+    ".ml", ".mli", ".mll", ".mly",
+    
+    # Lisp/Scheme
+    ".lisp", ".lsp", ".scm", ".ss",
+    
+    # Julia
+    ".jl",
+    
+    # Nim
+    ".nim", ".nims",
+    
+    # Crystal
+    ".cr",
+    
+    # Zig
+    ".zig",
+    
+    # V
+    ".v", ".vv",
+    
+    # Assembly
+    ".asm", ".s", ".S",
+    
+    # SQL/Database
+    ".sql", ".psql", ".plsql", ".tsql", ".mysql", ".pgsql",
+    
+    # Config Files
+    ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf", ".config",
+    ".json", ".json5", ".jsonc", ".json.tmpl",
+    ".xml", ".plist", ".properties", ".env", ".env.example", ".env.local",
+    ".env.development", ".env.production", ".env.test", ".env.staging",
+    ".editorconfig", ".prettierrc", ".eslintrc", ".babelrc",
+    
+    # Documentation
+    ".md", ".markdown", ".rst", ".txt", ".adoc", ".asciidoc", ".textile",
+    ".org", ".rdoc", ".pod", ".man",
+    
+    # Build/Project Files
+    ".gradle", ".maven", ".sbt", ".mill", ".bazel", ".buck",
+    ".cmake", ".make", ".mk", ".ninja",
+    
+    # Docker/Container
+    ".dockerfile", ".containerfile",
+    
+    # Terraform/IaC
+    ".tf", ".tfvars", ".hcl",
+    
+    # GraphQL
+    ".graphql", ".gql",
+    
+    # Protocol Buffers
+    ".proto", ".protobuf",
+    
+    # Thrift
+    ".thrift",
+    
+    # WASM
+    ".wasm", ".wat",
+    
+    # Vim
+    ".vim", ".vimrc",
+    
+    # Emacs
+    ".el", ".elc",
+    
+    # Jupyter
+    ".ipynb",
+    
+    # LaTeX
+    ".tex", ".latex", ".ltx",
+    
+    # Solidity/Smart Contracts
+    ".sol",
+    
+    # Vyper
+    ".vy",
+    
+    # MATLAB
+    ".m", ".mat",
+    
+    # Mathematica
+    ".nb", ".wl",
+    
+    # Fortran
+    ".f", ".for", ".f90", ".f95", ".f03",
+    
+    # COBOL
+    ".cob", ".cbl",
+    
+    # Ada
+    ".ada", ".adb", ".ads",
+    
+    # D
+    ".d", ".di",
+    
+    # Prolog
+    ".pl", ".pro", ".P",
+    
+    # Smalltalk
+    ".st",
+    
+    # Tcl
+    ".tcl",
+    
+    # Verilog/VHDL
+    ".v", ".vh", ".sv", ".vhd", ".vhdl",
+    
+    # Makefile variants
+    ".makefile", ".gnumakefile",
+    
+    # Git
+    ".gitignore", ".gitattributes", ".gitmodules",
+    
+    # CI/CD
+    ".gitlab-ci.yml", ".travis.yml", ".circleci", ".jenkinsfile",
+    
+    # Package managers
+    ".package.json", ".package-lock.json", ".yarn.lock", ".pnpm-lock.yaml",
+    ".cargo.toml", ".cargo.lock", ".gemfile.lock", ".pipfile.lock",
+    ".poetry.lock", ".composer.json", ".composer.lock",
+    
+    # App-specific
+    ".xcconfig", ".pbxproj", ".storyboard", ".xib",
+    ".gradle.kts", ".build.gradle",
 }
 
-IGNORE_DIRS = {".git", ".hg", ".svn", "node_modules", "venv", ".venv", "__pycache__", ".mypy_cache"}
+IGNORE_DIRS = {
+    # Version Control
+    ".git", ".hg", ".svn", ".bzr", ".fossil",
+    
+    # Dependencies
+    "node_modules", "bower_components", "jspm_packages",
+    "vendor", "packages", "lib-cov",
+    
+    # Python
+    "venv", ".venv", "env", ".env", "ENV", "virtualenv",
+    "__pycache__", ".pytest_cache", ".mypy_cache", ".tox",
+    "*.egg-info", ".eggs", ".Python", "pip-log.txt",
+    
+    # Build/Dist
+    "dist", "build", "out", "target", "bin", "obj",
+    ".next", ".nuxt", ".cache", ".parcel-cache",
+    ".output", ".vercel", ".netlify",
+    
+    # IDE/Editor
+    ".idea", ".vscode", ".vs", ".eclipse", ".project",
+    ".settings", ".classpath", ".factorypath",
+    "*.swp", "*.swo", "*~",
+    
+    # OS
+    ".DS_Store", "Thumbs.db", "desktop.ini",
+    
+    # Coverage/Test
+    "coverage", ".coverage", ".nyc_output", "htmlcov",
+    ".pytest_cache", ".rspec",
+    
+    # Logs
+    "logs", "*.log", "npm-debug.log*", "yarn-debug.log*",
+    "yarn-error.log*", "lerna-debug.log*",
+    
+    # Temporary
+    "tmp", "temp", ".tmp", ".temp",
+    
+    # Documentation builds
+    "_build", ".docusaurus", ".jekyll-cache",
+    "site", "public",
+}
