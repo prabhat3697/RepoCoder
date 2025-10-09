@@ -25,13 +25,13 @@ class ResponseGenerator:
         self.llm_executor = llm_executor
     
     def generate(self, query_analysis: QueryAnalysis, context: RetrievalContext, 
-                model_config: ModelConfig, repo_root: str) -> Response:
+                model_config: ModelConfig, repo_root: str, metadata_context: str = "") -> Response:
         """Generate response for a query"""
         console.print(f"[cyan]Generating response using {model_config.name}...[/]")
         
         # Build prompt
         system_prompt = self._build_system_prompt(query_analysis)
-        user_prompt = self._build_user_prompt(query_analysis, context, repo_root)
+        user_prompt = self._build_user_prompt(query_analysis, context, repo_root, metadata_context)
         
         # Let the model generate as much as it needs (use model's full capacity)
         # Don't artificially limit the response
@@ -75,25 +75,34 @@ class ResponseGenerator:
         return base_prompt + intent_prompt + "\n\nReturn a JSON response with keys: analysis, plan, changes."
     
     def _build_user_prompt(self, query_analysis: QueryAnalysis, context: RetrievalContext, 
-                          repo_root: str) -> str:
-        """Build user prompt with context"""
-        
-        # Format context
-        formatted_context = self._format_context(context, repo_root)
+                          repo_root: str, metadata_context: str = "") -> str:
+        """Build user prompt with context (and optional metadata)"""
         
         # Build prompt
         prompt_parts = [
             f"Task: {query_analysis.original_query}",
             "",
-            f"Context ({context.total_chunks} relevant code chunks):",
-            formatted_context,
         ]
+        
+        # Add metadata context first if available
+        if metadata_context:
+            prompt_parts.append("Repository Information:")
+            prompt_parts.append(metadata_context)
+            prompt_parts.append("")
+        
+        # Add code context
+        if context.total_chunks > 0:
+            formatted_context = self._format_context(context, repo_root)
+            prompt_parts.append(f"Code Context ({context.total_chunks} relevant chunks):")
+            prompt_parts.append(formatted_context)
+            prompt_parts.append("")
         
         if query_analysis.file_references:
             files = ", ".join(ref.filename for ref in query_analysis.file_references)
-            prompt_parts.append(f"\nFiles mentioned: {files}")
+            prompt_parts.append(f"Files mentioned: {files}")
+            prompt_parts.append("")
         
-        prompt_parts.append("\nProvide your analysis in JSON format.")
+        prompt_parts.append("Provide your analysis in JSON format.")
         
         return "\n".join(prompt_parts)
     

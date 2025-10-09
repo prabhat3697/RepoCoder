@@ -14,6 +14,7 @@ from .model_selector import ModelSelector
 from .response_generator import ResponseGenerator
 from .query_router import QueryRouter
 from .llm_router import LLMQueryRouter
+from .multi_intent_handler import MultiIntentHandler
 
 console = Console()
 
@@ -40,6 +41,7 @@ class RepoCoderPipeline:
         # Initialize components
         self.indexer = CoreIndexer(repo_root, code_extensions, ignore_dirs)
         self.query_analyzer = QueryAnalyzer(use_llm=False)
+        self.multi_intent_handler = MultiIntentHandler(self.indexer)  # NEW: Handle complex queries
         
         # Choose router based on configuration
         if use_llm_routing and routing_llm:
@@ -102,7 +104,17 @@ class RepoCoderPipeline:
         console.print("\n[bold yellow]" + "="*80 + "[/]")
         console.print("[bold yellow]STEP 1.5: QUERY ROUTING[/]")
         console.print("[bold yellow]" + "="*80 + "[/]")
-        routing_decision = self.query_router.route(query_analysis)
+        
+        # Check for multi-intent queries first
+        is_multi, intents = self.multi_intent_handler.detect_multi_intent(query_analysis)
+        
+        if is_multi:
+            # Handle multi-intent query
+            routing_decision = self.multi_intent_handler.create_routing_decision(intents, query_analysis)
+        else:
+            # Single intent - use normal routing
+            routing_decision = self.query_router.route(query_analysis)
+        
         console.print(f"  Strategy: [cyan]{routing_decision['strategy']}[/]")
         console.print(f"  Needs Code: [cyan]{routing_decision['needs_code']}[/]")
         console.print(f"  Needs Metadata: [cyan]{routing_decision['needs_metadata']}[/]")
@@ -156,22 +168,41 @@ class RepoCoderPipeline:
             
             return result
         
-        # Step 2: Retrieve Context
+        # Step 2: Retrieve Context (with multi-intent support)
         console.print("\n[bold yellow]" + "="*80 + "[/]")
         console.print("[bold yellow]STEP 2: CONTEXT RETRIEVAL[/]")
         console.print("[bold yellow]" + "="*80 + "[/]")
         
-        if query_analysis.file_references:
-            # When user explicitly mentions files, ONLY retrieve from those files
-            # Don't pollute with other files from semantic search
-            console.print(f"[cyan]User mentioned specific file(s), using STRICT file-only retrieval[/]")
-            context = self.context_retriever.retrieve(query_analysis, top_k)
-        else:
-            # No files mentioned, use semantic search
-            console.print(f"[cyan]No files mentioned, using semantic retrieval[/]")
-            context = self.context_retriever.retrieve(query_analysis, top_k)
+        # Handle multi-intent queries
+        metadata_context = ""
+        if routing_decision['strategy'] == 'multi_intent':
+            # Get metadata context
+            console.print(f"[cyan]Multi-intent query - gathering both metadata and code...[/]")
+            multi_result = self.multi_intent_handler.handle_multi_intent_query(query_analysis, intents)
+            metadata_context = multi_result['combined_context']
         
-        self._print_retrieval_context(context)
+        # Get code context based on routing
+        if routing_decision['needs_code']:
+            if query_analysis.file_references:
+                # When user explicitly mentions files, ONLY retrieve from those files
+                console.print(f"[cyan]User mentioned specific file(s), using STRICT file-only retrieval[/]")
+                context = self.context_retriever.retrieve(query_analysis, top_k)
+            else:
+                # No files mentioned, use semantic search
+                console.print(f"[cyan]No files mentioned, using semantic retrieval[/]")
+                context = self.context_retriever.retrieve(query_analysis, top_k)
+            
+            self._print_retrieval_context(context)
+        else:
+            # No code needed (metadata only)
+            console.print(f"[cyan]No code retrieval needed for this query[/]")
+            from .types import RetrievalContext
+            context = RetrievalContext(
+                chunks=[],
+                file_tree=[],
+                total_chunks=0,
+                strategy_used="metadata_only"
+            )
         
         # Step 3: Select Model
         console.print("\n[bold yellow]" + "="*80 + "[/]")
@@ -179,12 +210,12 @@ class RepoCoderPipeline:
         console.print("[bold yellow]" + "="*80 + "[/]")
         model_config = self.model_selector.select_model(query_analysis)
         
-        # Step 4: Generate Response
+        # Step 4: Generate Response (with metadata if needed)
         console.print("\n[bold yellow]" + "="*80 + "[/]")
         console.print("[bold yellow]STEP 4: RESPONSE GENERATION[/]")
         console.print("[bold yellow]" + "="*80 + "[/]")
         response = self.response_generator.generate(
-            query_analysis, context, model_config, self.repo_root
+            query_analysis, context, model_config, self.repo_root, metadata_context
         )
         
         # Calculate total time
