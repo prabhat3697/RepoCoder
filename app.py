@@ -136,7 +136,7 @@ def create_app(repo_root: str, models: List[str], device: str = "cpu",
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    
+
     @app.get("/health")
     def health():
         """Health check endpoint"""
@@ -147,6 +147,20 @@ def create_app(repo_root: str, models: List[str], device: str = "cpu",
         """Get indexing and system statistics"""
         return pipeline.get_stats()
     
+    # Import agents
+    from agents.planner import PlannerAgent
+    from agents.coder import CoderAgent
+    from agents.judge import JudgeAgent
+    from agents.executor import ExecutorAgent
+    from agents.orchestrator import AgentOrchestrator
+    
+    # Initialize agents
+    planner = PlannerAgent(llm_executor, pipeline.context_retriever, pipeline.indexer)
+    coder = CoderAgent(llm_executor, pipeline.context_retriever, pipeline.indexer, repo_root)
+    judge = JudgeAgent(llm_executor)
+    executor = ExecutorAgent(repo_root, auto_commit=False, auto_pr=False)
+    orchestrator = AgentOrchestrator(planner, coder, judge, executor)
+
     @app.post("/query", response_model=QueryResponse)
     def query(req: QueryRequest):
         """
@@ -167,11 +181,57 @@ def create_app(repo_root: str, models: List[str], device: str = "cpu",
             traceback.print_exc()
             raise HTTPException(status_code=500, detail=str(e))
     
+    @app.post("/implement")
+    def implement_feature(req: QueryRequest):
+        """
+        Multi-agent feature implementation (Cursor-style)
+        
+        Process:
+        1. PLANNER: Creates detailed plan
+        2. CODER: Implements each step
+        3. JUDGE: Reviews each change
+        4. EXECUTOR: Applies changes (optional)
+        
+        This is for code modification requests like:
+        - "Add rate limiting to API with tests"
+        - "Implement user authentication following project style"
+        - "Refactor database layer and add error handling"
+        """
+        try:
+            # Analyze the query first
+            from core.query_analyzer import QueryAnalyzer
+            analyzer = QueryAnalyzer()
+            query_analysis = analyzer.analyze(req.prompt)
+            
+            # Execute through multi-agent workflow
+            result = orchestrator.execute_feature_request(
+                user_request=req.prompt,
+                query_analysis=query_analysis,
+                auto_apply=False  # Don't auto-apply (return plan only)
+            )
+            
+            return {
+                "model": "MultiAgent",
+                "took_ms": 0,  # TODO: Track timing
+                "result": result
+            }
+            
+        except Exception as e:
+            console.print(f"[red]Error in multi-agent workflow:[/] {e}")
+            import traceback
+            traceback.print_exc()
+            raise HTTPException(status_code=500, detail=str(e))
+    
     console.print("\n[bold green]═══ RepoCoder Ready! ═══[/]")
     console.print(f"[cyan]Repository:[/] {repo_root}")
     console.print(f"[cyan]Models:[/] {', '.join(models)}")
-    console.print(f"[cyan]API:[/] http://localhost:8000/docs")
-    
+    console.print(f"[cyan]API Endpoints:[/]")
+    console.print(f"  • GET  /health - Health check")
+    console.print(f"  • GET  /stats - Repository statistics")
+    console.print(f"  • POST /query - Code analysis (simple)")
+    console.print(f"  • POST /implement - Feature implementation (multi-agent)")
+    console.print(f"[cyan]Docs:[/] http://localhost:8000/docs")
+
     return app
 
 
@@ -228,6 +288,6 @@ if __name__ == "__main__":
         use_llm_routing=args.use_llm_routing,
         routing_model=args.routing_model
     )
-    
+
     import uvicorn
     uvicorn.run(app, host=args.host, port=args.port)
